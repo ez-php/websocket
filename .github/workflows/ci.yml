@@ -1,0 +1,181 @@
+name: ez-php - CI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Primary test job: Docker-based, PHP 8.5, full quality suite + coverage
+  # ─────────────────────────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      # ---------- PHP + Composer on host (avoids OOM inside Docker) ----------
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v5
+        with:
+          path: vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Composer install
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      # ---------- Dependency audit ----------
+      - name: Composer audit
+        run: composer audit
+
+      # ---------- Build Docker image ----------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Cache Docker layers
+        uses: actions/cache@v5
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/app/Dockerfile
+          push: false
+          tags: ez-php/websocket-app:ci
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
+
+      # ---------- Prepare environment ----------
+      - name: Create .env from example
+        run: cp .env.example .env
+
+      # ---------- Start containers ----------
+      - name: Start Docker Compose
+        run: docker compose up -d
+
+      # ---------- PHP CS Fixer ----------
+      - name: Run CS Fixer (check only)
+        run: docker compose exec -T app vendor/bin/php-cs-fixer fix --dry-run --diff
+
+      # ---------- PHPStan ----------
+      - name: Run PHPStan
+        run: docker compose exec -T app vendor/bin/phpstan analyse
+
+      # ---------- PHPUnit with coverage ----------
+      - name: Run tests with coverage
+        run: docker compose exec -T app php -d pcov.enabled=1 vendor/bin/phpunit
+
+      - name: Fix coverage file ownership
+        run: sudo chown "$USER:$USER" var/coverage/clover.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./var/coverage/clover.xml
+          flags: websocket
+          fail_ci_if_error: false
+
+      # ---------- Stop containers ----------
+      - name: Stop Docker Compose
+        if: always()
+        run: docker compose down
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Compatibility matrix: PHP 8.5 (stable) + 8.6 / nightly (experimental)
+  # ─────────────────────────────────────────────────────────────────────────────
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.5', '8.6', 'nightly']
+        include:
+          - php-version: '8.5'
+            experimental: false
+          - php-version: '8.6'
+            experimental: true
+          - php-version: 'nightly'
+            experimental: true
+    continue-on-error: ${{ matrix.experimental }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v5
+        with:
+          path: vendor
+          key: ${{ runner.os }}-compat-php${{ matrix.php-version }}-composer-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-compat-php${{ matrix.php-version }}-composer-
+
+      - name: Composer install
+        run: composer install --no-interaction --prefer-dist --ignore-platform-reqs
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse
+        continue-on-error: ${{ matrix.experimental }}
+
+      - name: Run tests
+        run: vendor/bin/phpunit --no-coverage
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Auto-tag + changelog generation
+  # ─────────────────────────────────────────────────────────────────────────────
+  tag:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read version
+        id: version
+        run: echo "value=$(jq -r '.version // empty' composer.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag if not exists
+        id: create-tag
+        if: steps.version.outputs.value != ''
+        env:
+          TAG: v${{ steps.version.outputs.value }}
+        run: |
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists, skipping."
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "Tagged $TAG"
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+          fi

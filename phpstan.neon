@@ -1,0 +1,7 @@
+parameters:
+	level: 9
+	tmpDir: var/phpstan
+	treatPhpDocTypesAsCertain: false
+	paths:
+		- src
+		- tests
