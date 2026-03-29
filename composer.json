@@ -28,7 +28,7 @@
         "php": "^8.5"
     },
     "require-dev": {
-        "ez-php/docker": "^1.1",
+        "ez-php/docker": "^1.0",
         "phpunit/phpunit": "^13.0",
         "phpstan/phpstan": "^2.1",
         "friendsofphp/php-cs-fixer": "^3.94",
