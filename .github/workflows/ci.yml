@@ -7,7 +7,9 @@ on:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # Primary test job: Docker-based, PHP 8.5, full quality suite + coverage
+  # Primary test job: host-based, PHP 8.5, full quality suite + coverage
+  #
+  # No external service dependencies — runs directly on GitHub Actions host.
   # ─────────────────────────────────────────────────────────────────────────────
   test:
     runs-on: ubuntu-latest
@@ -15,15 +17,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
 
       # ---------- PHP + Composer on host (avoids OOM inside Docker) ----------
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'
-          coverage: none
+          coverage: pcov
 
       - name: Cache Composer packages
         uses: actions/cache@v5
@@ -41,49 +41,22 @@ jobs:
         run: composer audit
 
       # ---------- Build Docker image ----------
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Cache Docker layers
-        uses: actions/cache@v5
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Build image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: docker/app/Dockerfile
-          push: false
-          tags: ez-php/websocket-app:ci
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
 
       # ---------- Prepare environment ----------
-      - name: Create .env from example
-        run: cp .env.example .env
 
       # ---------- Start containers ----------
-      - name: Start Docker Compose
-        run: docker compose up -d
 
       # ---------- PHP CS Fixer ----------
       - name: Run CS Fixer (check only)
-        run: docker compose exec -T app vendor/bin/php-cs-fixer fix --dry-run --diff
+        run: vendor/bin/php-cs-fixer fix --dry-run --diff
 
       # ---------- PHPStan ----------
       - name: Run PHPStan
-        run: docker compose exec -T app vendor/bin/phpstan analyse
+        run: vendor/bin/phpstan analyse
 
       # ---------- PHPUnit with coverage ----------
       - name: Run tests with coverage
-        run: docker compose exec -T app php -d pcov.enabled=1 vendor/bin/phpunit
-
-      - name: Fix coverage file ownership
-        run: sudo chown "$USER:$USER" var/coverage/clover.xml
+        run: vendor/bin/phpunit
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -93,9 +66,6 @@ jobs:
           fail_ci_if_error: false
 
       # ---------- Stop containers ----------
-      - name: Stop Docker Compose
-        if: always()
-        run: docker compose down
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Compatibility matrix: PHP 8.5 (stable) + 8.6 / nightly (experimental)
