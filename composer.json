@@ -1,6 +1,6 @@
 {
     "name": "ez-php/websocket",
-    "version": "1.4.2",
+    "version": "1.5.0",
     "description": "PHP 8.5 Fiber-based WebSocket server for ez-php — RFC 6455 handshake, frame codec, ChannelManager pub/sub, and a non-blocking event loop.",
     "type": "library",
     "license": "MIT",
