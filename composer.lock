@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "aa52b50dc852b3312cd9e9da06829a8d",
+    "content-hash": "04e38b4c3a3801dd97232315895c5f9c",
     "packages": [],
     "packages-dev": [
         {
@@ -411,16 +411,16 @@
         },
         {
             "name": "ez-php/docker",
-            "version": "1.7.0",
+            "version": "1.7.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/docker.git",
-                "reference": "5c6dbe263bec001274ed6e5f8deb1bdb8a29f161"
+                "reference": "3d76d601f6d3b9ec292edbabcc0c93fdf38d66f4"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/docker/zipball/5c6dbe263bec001274ed6e5f8deb1bdb8a29f161",
-                "reference": "5c6dbe263bec001274ed6e5f8deb1bdb8a29f161",
+                "url": "https://api.github.com/repos/ez-php/docker/zipball/3d76d601f6d3b9ec292edbabcc0c93fdf38d66f4",
+                "reference": "3d76d601f6d3b9ec292edbabcc0c93fdf38d66f4",
                 "shasum": ""
             },
             "require": {
@@ -438,9 +438,9 @@
             "description": "Docker base image source and scaffolding stubs for ez-php modules and projects",
             "support": {
                 "issues": "https://github.com/ez-php/docker/issues",
-                "source": "https://github.com/ez-php/docker/tree/v1.7.0"
+                "source": "https://github.com/ez-php/docker/tree/v1.7.1"
             },
-            "time": "2026-04-19T01:13:11+00:00"
+            "time": "2026-04-19T09:47:13+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
