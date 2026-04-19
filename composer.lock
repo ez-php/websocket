@@ -411,16 +411,16 @@
         },
         {
             "name": "ez-php/docker",
-            "version": "1.6.1",
+            "version": "1.7.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/docker.git",
-                "reference": "5330eb062c455ca13c71cbbee22b2ac9f53983fc"
+                "reference": "5c6dbe263bec001274ed6e5f8deb1bdb8a29f161"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/docker/zipball/5330eb062c455ca13c71cbbee22b2ac9f53983fc",
-                "reference": "5330eb062c455ca13c71cbbee22b2ac9f53983fc",
+                "url": "https://api.github.com/repos/ez-php/docker/zipball/5c6dbe263bec001274ed6e5f8deb1bdb8a29f161",
+                "reference": "5c6dbe263bec001274ed6e5f8deb1bdb8a29f161",
                 "shasum": ""
             },
             "require": {
@@ -438,9 +438,9 @@
             "description": "Docker base image source and scaffolding stubs for ez-php modules and projects",
             "support": {
                 "issues": "https://github.com/ez-php/docker/issues",
-                "source": "https://github.com/ez-php/docker/tree/v1.6.1"
+                "source": "https://github.com/ez-php/docker/tree/v1.7.0"
             },
-            "time": "2026-04-19T00:55:38+00:00"
+            "time": "2026-04-19T01:13:11+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
