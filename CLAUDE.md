@@ -166,7 +166,7 @@ src/
 ├── HandshakeException.php    — HTTP→WebSocket upgrade failure (extends WebSocketException)
 ├── Opcode.php                — int-backed enum: CONTINUATION, TEXT, BINARY, CLOSE, PING, PONG
 ├── Frame.php                 — RFC 6455 frame: parse(string &$buffer): ?Frame, encode(): string
-├── ConnectionInterface.php   — id(), isConnected(), send(), sendBinary(), close()
+├── ConnectionInterface.php   — id(), isConnected(), send(), sendBinary(), close(), requestHeaders(), header()
 ├── Connection.php            — stream-socket implementation; handshake(), readFrame(), sendPong()
 ├── HandlerInterface.php      — onOpen(), onMessage(), onClose(), onError() lifecycle callbacks
 ├── ChannelManager.php        — subscribe/unsubscribe/broadcast pub/sub on named channels
@@ -220,7 +220,12 @@ Extended payload lengths: 126 → 2-byte big-endian; 127 → 8-byte big-endian
 
 Minimal contract. `id()` returns the unique connection string; `isConnected()` tracks
 whether the WebSocket connection is open. `send()` and `sendBinary()` write frames.
-`close()` sends a close frame with status 1000.
+`close()` sends a close frame with status 1000. `requestHeaders()` returns the
+upgrade-request headers (keyed by lowercased name) and `header($name)` looks one up
+case-insensitively — populated by `handshake()`, these let `onOpen()` handlers inspect
+`origin`, `cookie`, or auth headers and `close()` unwanted connections (e.g. Origin
+checks against Cross-Site WebSocket Hijacking). The module performs no authorization
+itself.
 
 ---
 
@@ -232,7 +237,9 @@ Connection so that tests can use blocking socket pairs without modification.
 
 `handshake()` reads HTTP headers in a loop, suspending the current `Fiber` when no data
 is yet available (checked with `Fiber::getCurrent() !== null`). Computes `Sec-WebSocket-Accept`
-via `base64_encode(sha1($key . GUID, true))`.
+via `base64_encode(sha1($key . GUID, true))`. It also parses the request header block
+(only up to the terminating `\r\n\r\n`) into a lowercased-key map exposed via
+`requestHeaders()`/`header()`, so `onOpen()` handlers can perform Origin/cookie checks.
 
 `readFrame()` does one non-blocking `fread()`, appends to an internal buffer, then
 delegates to `Frame::parse()`. Returns `null` when no complete frame is present yet.
@@ -330,7 +337,7 @@ process and are out of scope for this suite.
 | SSE / server-sent events | `ez-php/broadcast` |
 | TLS / WSS | Reverse proxy or a future `ez-php/websocket-tls` extension |
 | Message fragmentation reassembly | Application layer or future extension |
-| Authentication / authorization | Application handler (`onOpen()` → `$conn->close()`) |
+| Authentication / authorization | Application handler (`onOpen()`: inspect `header('origin')`/`header('cookie')`, then `$conn->close()` to reject) |
 | Persistent connection state across restarts | External store (Redis, DB) |
 | Push gateway / relay to external clients | Application layer |
-| HTTP routing before upgrade | `ez-php/framework` router (inspect headers in `onOpen()`) |
+| HTTP routing before upgrade | `ez-php/framework` router (inspect `requestHeaders()` in `onOpen()`) |

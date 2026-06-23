@@ -232,4 +232,63 @@ final class ConnectionTest extends TestCase
 
         fclose($client);
     }
+
+    public function testRequestHeadersAreEmptyBeforeHandshake(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        $conn = new Connection($server, '1');
+
+        self::assertSame([], $conn->requestHeaders());
+        self::assertNull($conn->header('origin'));
+
+        fclose($client);
+        fclose($server);
+    }
+
+    public function testHandshakeParsesUpgradeRequestHeaders(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        $key = base64_encode(random_bytes(16));
+        $request = "GET /chat HTTP/1.1\r\n"
+            . "Host: example.test\r\n"
+            . "Upgrade: websocket\r\n"
+            . "Connection: Upgrade\r\n"
+            . "Origin: https://evil.example\r\n"
+            . "Sec-WebSocket-Key: {$key}\r\n"
+            . "Sec-WebSocket-Version: 13\r\n"
+            . "\r\n";
+        fwrite($client, $request);
+
+        $conn = new Connection($server, '1');
+        $conn->handshake();
+
+        $headers = $conn->requestHeaders();
+        self::assertSame('https://evil.example', $headers['origin']);
+        self::assertSame('example.test', $headers['host']);
+        // The request line must not leak into the header map.
+        self::assertArrayNotHasKey('get /chat http/1.1', $headers);
+
+        fclose($client);
+    }
+
+    public function testHeaderLookupIsCaseInsensitive(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        $key = base64_encode(random_bytes(16));
+        fwrite($client, $this->upgradeRequest($key) . 'ignored pipelined bytes');
+
+        $conn = new Connection($server, '1');
+        $conn->handshake();
+
+        // Header sent as "Host"; lookup works regardless of case.
+        self::assertSame('localhost', $conn->header('Host'));
+        self::assertSame('localhost', $conn->header('host'));
+        self::assertSame('localhost', $conn->header('HOST'));
+        self::assertNull($conn->header('x-absent'));
+
+        fclose($client);
+    }
 }

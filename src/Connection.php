@@ -29,6 +29,9 @@ final class Connection implements ConnectionInterface
 
     private bool $connected = false;
 
+    /** @var array<string, string> Upgrade-request headers, keyed by lowercased name. */
+    private array $requestHeaders = [];
+
     /**
      * @param resource $socket Stream socket (blocking mode left to caller)
      * @param string   $id     Unique identifier for this connection
@@ -60,6 +63,10 @@ final class Connection implements ConnectionInterface
      * Returns the underlying stream socket resource.
      *
      * Used by `Server` to register the socket with `stream_select()`.
+     *
+     * The native return type is `mixed` because PHP has no `resource` type
+     * hint; the precise contract is the `@return resource` tag, which PHPStan
+     * enforces. Callers receive a live stream-socket resource.
      *
      * @return resource
      */
@@ -98,6 +105,8 @@ final class Connection implements ConnectionInterface
                 }
             }
         }
+
+        $this->requestHeaders = $this->parseHeaders($raw);
 
         if (!preg_match('/Sec-WebSocket-Key:\s*([^\r\n]+)/i', $raw, $matches)) {
             throw new HandshakeException('Missing Sec-WebSocket-Key header in upgrade request.');
@@ -203,6 +212,26 @@ final class Connection implements ConnectionInterface
     }
 
     /**
+     * Returns the upgrade-request headers, keyed by lowercased name.
+     *
+     * Populated by `handshake()`; empty before the handshake completes.
+     *
+     * @return array<string, string>
+     */
+    public function requestHeaders(): array
+    {
+        return $this->requestHeaders;
+    }
+
+    /**
+     * Returns a single upgrade-request header value (case-insensitive) or `null`.
+     */
+    public function header(string $name): ?string
+    {
+        return $this->requestHeaders[strtolower($name)] ?? null;
+    }
+
+    /**
      * Writes an encoded frame to the socket.
      */
     private function writeFrame(Frame $frame): void
@@ -210,5 +239,43 @@ final class Connection implements ConnectionInterface
         if ($this->connected) {
             fwrite($this->socket, $frame->encode());
         }
+    }
+
+    /**
+     * Parses the HTTP header block of the raw upgrade request into a map
+     * keyed by lowercased header name. The request line and anything past
+     * the terminating CRLFCRLF are ignored. Duplicate headers keep the last
+     * value seen.
+     *
+     * @param string $raw Raw bytes read during the handshake.
+     *
+     * @return array<string, string>
+     */
+    private function parseHeaders(string $raw): array
+    {
+        $end = strpos($raw, "\r\n\r\n");
+        $headerBlock = $end === false ? $raw : substr($raw, 0, $end);
+
+        $lines = explode("\r\n", $headerBlock);
+        array_shift($lines); // drop the request line (e.g. "GET /chat HTTP/1.1")
+
+        $headers = [];
+
+        foreach ($lines as $line) {
+            $colon = strpos($line, ':');
+
+            if ($colon === false) {
+                continue;
+            }
+
+            $name = strtolower(trim(substr($line, 0, $colon)));
+            $value = trim(substr($line, $colon + 1));
+
+            if ($name !== '') {
+                $headers[$name] = $value;
+            }
+        }
+
+        return $headers;
     }
 }

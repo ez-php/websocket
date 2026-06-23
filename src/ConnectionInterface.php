@@ -42,4 +42,23 @@ interface ConnectionInterface
      * @param string|null $reason Optional close reason appended after the status code
      */
     public function close(?string $reason = null): void;
+
+    /**
+     * Returns the HTTP headers sent with the upgrade request, keyed by
+     * lowercased header name. Empty until `handshake()` has completed.
+     *
+     * Handlers use this in `onOpen()` to inspect `origin`, `cookie`, or
+     * authentication headers and decide whether to keep or `close()` the
+     * connection (e.g. Origin checks to prevent Cross-Site WebSocket
+     * Hijacking). This module performs no authorization itself.
+     *
+     * @return array<string, string>
+     */
+    public function requestHeaders(): array;
+
+    /**
+     * Returns a single upgrade-request header value by name (case-insensitive),
+     * or `null` when the header was not present.
+     */
+    public function header(string $name): ?string;
 }
