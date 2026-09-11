@@ -221,4 +221,35 @@ final class FrameTest extends TestCase
         $buffer = chr(0x82) . chr(126) . chr(0); // need 2 ext bytes, only 1 present
         self::assertNull(Frame::parse($buffer));
     }
+
+    public function testParseRejects127ExtendedLengthWithHighBitSet(): void
+    {
+        // RFC 6455 §5.2: the most significant bit of the 8-byte extended
+        // length MUST be 0. A first length byte of 0x80 would otherwise make
+        // the resulting PHP int negative, desyncing the frame stream.
+        $buffer = chr(0x82) . chr(127)
+            . chr(0x80) . chr(0) . chr(0) . chr(0) . chr(0) . chr(0) . chr(0) . chr(0)
+            . 'trailing bytes that must never be parsed as payload';
+
+        $this->expectException(WebSocketException::class);
+        Frame::parse($buffer);
+    }
+
+    public function testParseRejectsPayloadLargerThanMaxAllowed(): void
+    {
+        // Declare a 127-length (8-byte extended) frame whose length exceeds
+        // Frame's internal MAX_PAYLOAD_BYTES (16 MiB), without ever having to
+        // buffer that much data — parse() must reject based on the declared
+        // length alone, before waiting for the (nonexistent) payload bytes.
+        $tooLarge = 32 * 1024 * 1024; // 32 MiB > 16 MiB limit
+        $lengthBytes = '';
+        for ($shift = 56; $shift >= 0; $shift -= 8) {
+            $lengthBytes .= chr(($tooLarge >> $shift) & 0xFF);
+        }
+
+        $buffer = chr(0x82) . chr(127) . $lengthBytes;
+
+        $this->expectException(WebSocketException::class);
+        Frame::parse($buffer);
+    }
 }

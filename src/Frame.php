@@ -16,6 +16,15 @@ namespace EzPhp\WebSocket;
 final class Frame
 {
     /**
+     * Maximum accepted frame payload size in bytes (16 MiB). Enforced in
+     * {@see parse()} as soon as the declared length is known, so a client
+     * that advertises an oversized frame is rejected before any of its
+     * payload bytes are buffered — guarding against unbounded per-connection
+     * memory growth.
+     */
+    private const MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
+    /**
      * @param Opcode $opcode  Frame type
      * @param string $payload Decoded (unmasked) payload bytes
      * @param bool   $fin     Whether this is the final fragment (FIN bit)
@@ -69,11 +78,24 @@ final class Frame
             if (strlen($buffer) < 10) {
                 return null;
             }
+
+            // RFC 6455 §5.2: the most significant bit of the 8-byte extended
+            // length MUST be 0. Accepting a set high bit would make the PHP
+            // int below negative, desyncing the frame stream (see MAX_PAYLOAD_BYTES
+            // check just below for the same class of bug at smaller scale).
+            if ((ord($buffer[2]) & 0x80) !== 0) {
+                throw new WebSocketException('WebSocket frame has an invalid extended payload length.');
+            }
+
             $payloadLen = 0;
             for ($i = 2; $i < 10; $i++) {
                 $payloadLen = ($payloadLen << 8) | ord($buffer[$i]);
             }
             $offset = 10;
+        }
+
+        if ($payloadLen > self::MAX_PAYLOAD_BYTES) {
+            throw new WebSocketException('WebSocket frame payload exceeds the maximum allowed size.');
         }
 
         $maskSize = $masked ? 4 : 0;

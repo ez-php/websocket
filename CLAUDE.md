@@ -28,6 +28,7 @@ docker compose exec app composer full
 Executes in order:
 1. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
 2. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+   *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
 3. `phpunit` — all tests with coverage
 
 Individual commands when needed:
@@ -120,7 +121,7 @@ Every module `CLAUDE.md` must follow this exact structure:
 
 ### 3 — Docker scaffold
 
-Run from the new module root (requires `"ez-php/docker": "^1.1"` in `require-dev`):
+Run from the new module root (requires `"ez-php/docker": "^1.0"` in `require-dev`):
 
 ```
 vendor/bin/docker-init

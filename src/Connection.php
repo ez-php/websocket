@@ -22,6 +22,14 @@ use Fiber;
  */
 final class Connection implements ConnectionInterface
 {
+    /**
+     * Maximum number of bytes accepted while accumulating the HTTP upgrade
+     * request during {@see handshake()}. Guards against a client that never
+     * sends a terminating `\r\n\r\n`, which would otherwise grow the buffer
+     * without bound (memory-exhaustion / Slowloris-style DoS).
+     */
+    private const MAX_HANDSHAKE_BYTES = 8192;
+
     /** @var resource */
     private $socket;
 
@@ -91,9 +99,17 @@ final class Connection implements ConnectionInterface
         $raw = '';
 
         while (!str_contains($raw, "\r\n\r\n")) {
+            if (strlen($raw) >= self::MAX_HANDSHAKE_BYTES) {
+                throw new HandshakeException('WebSocket upgrade request exceeds the maximum handshake size.');
+            }
+
             $data = fread($this->socket, 4096);
 
             if ($data === false) {
+                throw new HandshakeException('Connection closed during WebSocket handshake.');
+            }
+
+            if ($data === '' && feof($this->socket)) {
                 throw new HandshakeException('Connection closed during WebSocket handshake.');
             }
 
@@ -108,12 +124,17 @@ final class Connection implements ConnectionInterface
 
         $this->requestHeaders = $this->parseHeaders($raw);
 
-        if (!preg_match('/Sec-WebSocket-Key:\s*([^\r\n]+)/i', $raw, $matches)) {
-            throw new HandshakeException('Missing Sec-WebSocket-Key header in upgrade request.');
+        $this->assertValidUpgradeRequest();
+
+        $key = $this->requestHeaders['sec-websocket-key'] ?? '';
+        $decodedKey = base64_decode($key, true);
+
+        if ($decodedKey === false || strlen($decodedKey) !== 16) {
+            throw new HandshakeException('Invalid Sec-WebSocket-Key header in upgrade request.');
         }
 
         $accept = base64_encode(
-            sha1(trim($matches[1]) . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true)
+            sha1($key . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true)
         );
 
         $response = "HTTP/1.1 101 Switching Protocols\r\n"
@@ -238,6 +259,44 @@ final class Connection implements ConnectionInterface
     {
         if ($this->connected) {
             fwrite($this->socket, $frame->encode());
+        }
+    }
+
+    /**
+     * Validates the required RFC 6455 §4.2.1 upgrade-request headers.
+     *
+     * Verifying only that `Sec-WebSocket-Key` is present (the previous
+     * behaviour) let any plain HTTP request carrying that one header be
+     * accepted as a WebSocket upgrade. This checks `Upgrade: websocket`,
+     * `Connection: Upgrade` (comma-separated tokens allowed), and
+     * `Sec-WebSocket-Version: 13` as well.
+     *
+     * @throws HandshakeException when a required header is missing or has
+     *                            an unexpected value
+     */
+    private function assertValidUpgradeRequest(): void
+    {
+        $upgrade = strtolower($this->requestHeaders['upgrade'] ?? '');
+
+        if ($upgrade !== 'websocket') {
+            throw new HandshakeException('Missing or invalid Upgrade header in upgrade request.');
+        }
+
+        $connectionTokens = array_map(
+            static fn (string $token): string => strtolower(trim($token)),
+            explode(',', $this->requestHeaders['connection'] ?? '')
+        );
+
+        if (!in_array('upgrade', $connectionTokens, true)) {
+            throw new HandshakeException('Missing or invalid Connection header in upgrade request.');
+        }
+
+        if (($this->requestHeaders['sec-websocket-version'] ?? '') !== '13') {
+            throw new HandshakeException('Missing or unsupported Sec-WebSocket-Version header in upgrade request.');
+        }
+
+        if (!isset($this->requestHeaders['sec-websocket-key'])) {
+            throw new HandshakeException('Missing Sec-WebSocket-Key header in upgrade request.');
         }
     }
 

@@ -116,6 +116,134 @@ final class ConnectionTest extends TestCase
         fclose($client);
     }
 
+    public function testHandshakeThrowsWhenUpgradeHeaderMissing(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        // A plain HTTP request carrying only Sec-WebSocket-Key must not be
+        // accepted as a WebSocket upgrade.
+        $key = base64_encode(random_bytes(16));
+        fwrite($client, "GET / HTTP/1.1\r\nHost: localhost\r\nSec-WebSocket-Key: {$key}\r\n\r\n");
+
+        $conn = new Connection($server, '1');
+
+        $this->expectException(HandshakeException::class);
+        $conn->handshake();
+
+        fclose($client);
+    }
+
+    public function testHandshakeThrowsWhenConnectionHeaderMissing(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        $key = base64_encode(random_bytes(16));
+        $request = "GET / HTTP/1.1\r\n"
+            . "Host: localhost\r\n"
+            . "Upgrade: websocket\r\n"
+            . "Sec-WebSocket-Key: {$key}\r\n"
+            . "Sec-WebSocket-Version: 13\r\n"
+            . "\r\n";
+        fwrite($client, $request);
+
+        $conn = new Connection($server, '1');
+
+        $this->expectException(HandshakeException::class);
+        $conn->handshake();
+
+        fclose($client);
+    }
+
+    public function testHandshakeThrowsWhenVersionHeaderMissing(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        $key = base64_encode(random_bytes(16));
+        $request = "GET / HTTP/1.1\r\n"
+            . "Host: localhost\r\n"
+            . "Upgrade: websocket\r\n"
+            . "Connection: Upgrade\r\n"
+            . "Sec-WebSocket-Key: {$key}\r\n"
+            . "\r\n";
+        fwrite($client, $request);
+
+        $conn = new Connection($server, '1');
+
+        $this->expectException(HandshakeException::class);
+        $conn->handshake();
+
+        fclose($client);
+    }
+
+    public function testHandshakeAcceptsCommaSeparatedConnectionHeader(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        // Real browsers often send "Connection: keep-alive, Upgrade".
+        $key = base64_encode(random_bytes(16));
+        $request = "GET / HTTP/1.1\r\n"
+            . "Host: localhost\r\n"
+            . "Upgrade: websocket\r\n"
+            . "Connection: keep-alive, Upgrade\r\n"
+            . "Sec-WebSocket-Key: {$key}\r\n"
+            . "Sec-WebSocket-Version: 13\r\n"
+            . "\r\n";
+        fwrite($client, $request);
+
+        $conn = new Connection($server, '1');
+        $conn->handshake();
+
+        self::assertTrue($conn->isConnected());
+
+        fclose($client);
+    }
+
+    public function testHandshakeThrowsWhenKeyDoesNotDecodeToSixteenBytes(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        // Valid base64, but decodes to fewer than 16 bytes.
+        $shortKey = base64_encode('too short');
+        fwrite($client, $this->upgradeRequest($shortKey));
+
+        $conn = new Connection($server, '1');
+
+        $this->expectException(HandshakeException::class);
+        $conn->handshake();
+
+        fclose($client);
+    }
+
+    public function testHandshakeThrowsWhenRequestExceedsMaxSize(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        // Never send a terminating \r\n\r\n — without a size cap this would
+        // grow the internal buffer without bound (Slowloris-style DoS).
+        fwrite($client, "GET / HTTP/1.1\r\n" . str_repeat('X-Padding: filler\r\n', 1000));
+
+        $conn = new Connection($server, '1');
+
+        $this->expectException(HandshakeException::class);
+        $conn->handshake();
+
+        fclose($client);
+    }
+
+    public function testHandshakeThrowsWhenClientClosesBeforeHeadersComplete(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        // Partial request, then EOF — must not suspend forever.
+        fwrite($client, "GET / HTTP/1.1\r\nHost: localhost\r\n");
+        fclose($client);
+
+        $conn = new Connection($server, '1');
+
+        $this->expectException(HandshakeException::class);
+        $conn->handshake();
+    }
+
     public function testSendWritesTextFrameToSocket(): void
     {
         [$server, $client] = $this->socketPair();
