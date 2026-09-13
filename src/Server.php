@@ -36,7 +36,7 @@ final class Server
     /**
      * Fibers indexed by resource ID.
      *
-     * @var array<int, Fiber<mixed, mixed, void, mixed>>
+     * @var array<int, Fiber<mixed, mixed, mixed, mixed>>
      */
     private array $fibers = [];
 
