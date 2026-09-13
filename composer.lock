@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "077a2fdb11c1eb5e4666e029deec0fa7",
+    "content-hash": "2c614a7966622d662eaae3f5202cddb4",
     "packages": [],
     "packages-dev": [
         {
@@ -408,20 +408,23 @@
         },
         {
             "name": "ez-php/docker",
-            "version": "2.1.0",
+            "version": "2.1.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/docker.git",
-                "reference": "938ed7e8fb52f51b7b03ed6a137da7abe0cd61d6"
+                "reference": "0df243800afc2c2f86c96ef3f3a76b742e4a9b98"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/docker/zipball/938ed7e8fb52f51b7b03ed6a137da7abe0cd61d6",
-                "reference": "938ed7e8fb52f51b7b03ed6a137da7abe0cd61d6",
+                "url": "https://api.github.com/repos/ez-php/docker/zipball/0df243800afc2c2f86c96ef3f3a76b742e4a9b98",
+                "reference": "0df243800afc2c2f86c96ef3f3a76b742e4a9b98",
                 "shasum": ""
             },
             "require": {
                 "php": "^8.5"
+            },
+            "require-dev": {
+                "friendsofphp/php-cs-fixer": "^3.94"
             },
             "bin": [
                 "bin/docker-init",
@@ -435,9 +438,9 @@
             "description": "Docker base image source and scaffolding stubs for ez-php modules and projects",
             "support": {
                 "issues": "https://github.com/ez-php/docker/issues",
-                "source": "https://github.com/ez-php/docker/tree/v2.1.0"
+                "source": "https://github.com/ez-php/docker/tree/v2.1.1"
             },
-            "time": "2026-09-13T10:44:42+00:00"
+            "time": "2026-09-13T16:57:46+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
