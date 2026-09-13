@@ -408,16 +408,16 @@
         },
         {
             "name": "ez-php/docker",
-            "version": "2.1.1",
+            "version": "2.2.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/ez-php/docker.git",
-                "reference": "0df243800afc2c2f86c96ef3f3a76b742e4a9b98"
+                "reference": "1eaa2bb26989106e1f42d74a5f373799b17524aa"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/ez-php/docker/zipball/0df243800afc2c2f86c96ef3f3a76b742e4a9b98",
-                "reference": "0df243800afc2c2f86c96ef3f3a76b742e4a9b98",
+                "url": "https://api.github.com/repos/ez-php/docker/zipball/1eaa2bb26989106e1f42d74a5f373799b17524aa",
+                "reference": "1eaa2bb26989106e1f42d74a5f373799b17524aa",
                 "shasum": ""
             },
             "require": {
@@ -438,9 +438,9 @@
             "description": "Docker base image source and scaffolding stubs for ez-php modules and projects",
             "support": {
                 "issues": "https://github.com/ez-php/docker/issues",
-                "source": "https://github.com/ez-php/docker/tree/v2.1.1"
+                "source": "https://github.com/ez-php/docker/tree/v2.2.0"
             },
-            "time": "2026-09-13T16:57:46+00:00"
+            "time": "2026-09-13T18:26:05+00:00"
         },
         {
             "name": "fidry/cpu-core-counter",
@@ -669,16 +669,16 @@
         },
         {
             "name": "nikic/php-parser",
-            "version": "v5.8.0",
+            "version": "v5.9.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/nikic/PHP-Parser.git",
-                "reference": "044a6a392ff8ad0d61f14370a5fbbd0a0107152f"
+                "reference": "9e33da9553fe7786f0962b35f4e4ecf01be89def"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/nikic/PHP-Parser/zipball/044a6a392ff8ad0d61f14370a5fbbd0a0107152f",
-                "reference": "044a6a392ff8ad0d61f14370a5fbbd0a0107152f",
+                "url": "https://api.github.com/repos/nikic/PHP-Parser/zipball/9e33da9553fe7786f0962b35f4e4ecf01be89def",
+                "reference": "9e33da9553fe7786f0962b35f4e4ecf01be89def",
                 "shasum": ""
             },
             "require": {
@@ -720,9 +720,9 @@
             ],
             "support": {
                 "issues": "https://github.com/nikic/PHP-Parser/issues",
-                "source": "https://github.com/nikic/PHP-Parser/tree/v5.8.0"
+                "source": "https://github.com/nikic/PHP-Parser/tree/v5.9.0"
             },
-            "time": "2026-07-04T14:30:18+00:00"
+            "time": "2026-09-13T18:51:52+00:00"
         },
         {
             "name": "phar-io/manifest",

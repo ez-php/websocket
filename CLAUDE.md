@@ -151,6 +151,20 @@ php make_module.php <name> --description="..." --services=mysql,redis
 `EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum` and
 `opcache` → `OPCache` are existing exceptions the guess gets wrong).
 
+To bring in a module whose code already lives in its own repository instead of
+generating a fresh skeleton, pass `--repo=` with a git URL:
+
+```
+php make_module.php <name> --repo=<git-url> [--namespace=Foo]
+```
+
+This runs `git submodule add <url> modules/<name>` instead of writing package
+files, then applies the same monorepo wiring below. It is mutually exclusive
+with `--services` and `--description` — a submodule brings its own Docker
+scaffold (if any) and its own `composer.json` description. A minimal `CLAUDE.md`
+stub is written only if the submodule doesn't already ship one, so
+`composer guidelines:sync` has a `# Package:` heading to anchor part 1 against.
+
 It writes `modules/<name>/` and registers the module in the four places the monorepo
 needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
 (test suite **and** coverage source), and `packages.sh` (alphabetical position).
