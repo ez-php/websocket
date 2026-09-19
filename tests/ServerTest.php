@@ -13,9 +13,9 @@ use EzPhp\WebSocket\WebSocketException;
 /**
  * Unit-level tests for the Server class.
  *
- * Full end-to-end tests (connect a real WebSocket client, send messages, verify
- * the handler fires) require running the server in a separate process and are
- * out of scope for this test suite. Those belong in integration tests.
+ * The per-connection lifecycle and the event loop are covered in-process by
+ * `ServerConnectionLifecycleTest`; `run()` itself blocks forever, so only its
+ * failure mode (port already in use) is tested here.
  *
  * @covers \EzPhp\WebSocket\Server
  */

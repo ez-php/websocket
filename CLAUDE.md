@@ -266,7 +266,8 @@ tests/
 ├── FrameTest.php             — encode, parse, masked client frames, extended lengths, round-trip
 ├── ConnectionTest.php        — handshake, send, readFrame, close — using UNIX socket pairs
 ├── ChannelManagerTest.php    — subscribe/unsubscribe/broadcast with PHPUnit mocks
-└── ServerTest.php            — constructor, accessors, run() throws on port conflict
+├── ServerTest.php            — constructor, accessors, run() throws on port conflict
+└── ServerConnectionLifecycleTest.php — in-process: handleConnection over socket pairs, acceptConnection on a loopback listener, loop() left via a handler exception
 ```
 
 ---
@@ -412,6 +413,7 @@ No external infrastructure required. All tests run in-process.
 - `ChannelManagerTest` — PHPUnit mocks for `ConnectionInterface`; subscribe, unsubscribe,
   unsubscribeAll, broadcast sends/skips/prunes, channel lifecycle
 - `ServerTest` — constructor, accessors, `run()` throws `WebSocketException` on port conflict
+- `ServerConnectionLifecycleTest` — `Server::run()` never returns, so the private lifecycle methods are driven directly by reflection: `handleConnection()` in a `Fiber` over a `stream_socket_pair` (upgrade, text/binary/ping/pong/close, invalid upgrade, handler exception, peer disconnect), `acceptConnection()` against a real loopback listener, and `loop()` itself — the test's handler sends its frames from `onOpen` and escapes the loop by throwing from `onError`. Deterministic, no child process, and visible to the coverage driver (Server ≈ 90 % lines)
 
 Full integration tests (multiple concurrent WebSocket clients) require a separate test
 process and are out of scope for this suite.

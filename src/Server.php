@@ -86,15 +86,24 @@ final class Server
      */
     public function run(HandlerInterface $handler): void
     {
-        $serverSocket = @stream_socket_server(
-            "tcp://{$this->host}:{$this->port}",
-            $errno,
-            $errstr
+        $errno = 0;
+        $errstr = '';
+
+        [$serverSocket, $warning] = $this->callCapturingWarning(
+            function () use (&$errno, &$errstr) {
+                return stream_socket_server(
+                    "tcp://{$this->host}:{$this->port}",
+                    $errno,
+                    $errstr
+                );
+            }
         );
 
         if ($serverSocket === false) {
+            $reason = $errstr !== '' ? $errstr : ($warning ?? 'unknown error');
+
             throw new WebSocketException(
-                "Cannot start WebSocket server on {$this->host}:{$this->port}: {$errstr} ({$errno})"
+                "Cannot start WebSocket server on {$this->host}:{$this->port}: {$reason} ({$errno})"
             );
         }
 
@@ -165,7 +174,8 @@ final class Server
      */
     private function acceptConnection(HandlerInterface $handler, $serverSocket): void
     {
-        $clientSocket = @stream_socket_accept($serverSocket, 0);
+        // With a zero timeout "no pending connection" is reported as a warning; that is expected here.
+        [$clientSocket] = $this->callCapturingWarning(static fn () => stream_socket_accept($serverSocket, 0));
 
         if ($clientSocket === false) {
             return;
@@ -235,5 +245,34 @@ final class Server
     private function removeConnection(int $rid): void
     {
         unset($this->connections[$rid], $this->fibers[$rid], $this->sockets[$rid]);
+    }
+
+    /**
+     * Run a stream/filesystem call with PHP warnings converted into a returned message
+     * instead of being emitted (replaces the `@` operator, which hides the reason).
+     *
+     * @template T
+     *
+     * @param callable(): T $fn
+     *
+     * @return array{0: T, 1: string|null} The call's result and the captured warning message, if any.
+     */
+    private function callCapturingWarning(callable $fn): array
+    {
+        $warning = null;
+
+        set_error_handler(static function (int $errno, string $errstr) use (&$warning): bool {
+            $warning = $errstr;
+
+            return true;
+        }, E_WARNING);
+
+        try {
+            $result = $fn();
+        } finally {
+            restore_error_handler();
+        }
+
+        return [$result, $warning];
     }
 }
