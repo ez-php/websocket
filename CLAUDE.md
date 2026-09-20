@@ -175,8 +175,8 @@ Two things stay manual on purpose:
 - **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
   `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
   would recreate the drift the sync script exists to prevent.
-- **The host-port table below** (`--services` only) — editing it marks all ~40
-  `CLAUDE.md` copies as drifted at once, so the next `composer full` would fail for
+- **The host-port table below** (`--services` only) — editing it marks every
+  `CLAUDE.md` copy as drifted at once, so the next `composer full` would fail for
   a brand-new module. The generator prints which ports to claim instead.
 
 ### 4 — Docker scaffold
