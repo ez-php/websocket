@@ -225,11 +225,24 @@ final class Server
                     continue;
                 }
 
+                // RFC 6455 §5.1: a server MUST close the connection on an unmasked client frame.
+                if (!$frame->masked) {
+                    $conn->closeWith(1002, 'Client frames must be masked.');
+                    break;
+                }
+
+                // Fragmented messages are not reassembled. Refuse them (1003 unsupported
+                // data) rather than hand the first fragment to the handler as if complete.
+                if ($frame->opcode === Opcode::CONTINUATION || (!$frame->fin && ($frame->opcode === Opcode::TEXT || $frame->opcode === Opcode::BINARY))) {
+                    $conn->closeWith(1003, 'Fragmented messages are not supported.');
+                    break;
+                }
+
                 match ($frame->opcode) {
                     Opcode::TEXT, Opcode::BINARY => $handler->onMessage($conn, $frame),
                     Opcode::CLOSE => $conn->close(),
                     Opcode::PING => $conn->sendPong($frame->payload),
-                    Opcode::PONG, Opcode::CONTINUATION => null,
+                    Opcode::PONG => null,
                 };
             }
         } catch (\Throwable $e) {

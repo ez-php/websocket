@@ -162,6 +162,52 @@ final class ServerConnectionLifecycleTest extends TestCase
         self::assertContains('message:bin', $this->log->events);
     }
 
+    public function test_a_fragmented_message_is_refused_with_1003_instead_of_delivered_truncated(): void
+    {
+        [$peer, $fiber] = $this->startConnection();
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::TEXT, 'part-1', fin: false));
+        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, 'part-2', fin: true));
+        $fiber->resume();
+
+        $close = $this->readServerFrame($peer);
+        self::assertSame(Opcode::CLOSE, $close->opcode);
+        self::assertSame(1003, unpack('n', $close->payload)[1] ?? null);
+        self::assertNotContains('message:part-1', $this->log->events);
+        self::assertTrue($fiber->isTerminated());
+        self::assertSame('close', end($this->log->events));
+    }
+
+    public function test_a_stray_continuation_frame_is_refused_with_1003(): void
+    {
+        [$peer, $fiber] = $this->startConnection();
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, 'orphan', fin: true));
+        $fiber->resume();
+
+        $close = $this->readServerFrame($peer);
+        self::assertSame(Opcode::CLOSE, $close->opcode);
+        self::assertSame(1003, unpack('n', $close->payload)[1] ?? null);
+        self::assertTrue($fiber->isTerminated());
+    }
+
+    public function test_an_unmasked_client_frame_is_refused_with_1002(): void
+    {
+        [$peer, $fiber] = $this->startConnection();
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::TEXT, 'plain', fin: true, masked: false));
+        $fiber->resume();
+
+        $close = $this->readServerFrame($peer);
+        self::assertSame(Opcode::CLOSE, $close->opcode);
+        self::assertSame(1002, unpack('n', $close->payload)[1] ?? null);
+        self::assertNotContains('message:plain', $this->log->events);
+        self::assertTrue($fiber->isTerminated());
+    }
+
     public function test_invalid_upgrade_request_reports_an_error_and_never_opens(): void
     {
         [$peer, $fiber] = $this->startConnection();
@@ -370,6 +416,24 @@ final class ServerConnectionLifecycleTest extends TestCase
         }
 
         self::fail('No complete frame from the server.');
+    }
+
+    private function rawFrame(Opcode $opcode, string $payload, bool $fin, bool $masked = true): string
+    {
+        $b0 = ($fin ? 0x80 : 0x00) | $opcode->value;
+
+        if (!$masked) {
+            return chr($b0) . chr(strlen($payload) & 0x7F) . $payload;
+        }
+
+        $mask = "\x0a\x0b\x0c\x0d";
+        $body = '';
+
+        for ($i = 0, $n = strlen($payload); $i < $n; $i++) {
+            $body .= $payload[$i] ^ $mask[$i % 4];
+        }
+
+        return chr($b0) . chr((0x80 | strlen($payload)) & 0xFF) . $mask . $body;
     }
 
     private function maskedFrame(Opcode $opcode, string $payload): string

@@ -241,7 +241,7 @@ Only set a port for services the module actually uses. Modules without external 
 
 > The `MEILISEARCH_PORT` column is the **host** port. Inside a Compose network the service is always reachable at `http://meilisearch:7700` regardless of the host mapping — only publish-side ports need to be unique.
 
-> The "Redis host port" column is likewise the **host**-published port. `ez-php/cache`, `ez-php/queue`, and `ez-php/rate-limiter` map it through a separate `REDIS_HOST_PORT` env var in `docker-compose.yml`, keeping `REDIS_PORT` fixed at `6379` for in-container connections (the app container always reaches Redis at `redis:6379` over the Compose network, regardless of the host mapping) — the root project and the `ez-php/` application template are the two exceptions, since both have no host/container split and use `REDIS_PORT` for both (the template's other in-container Redis settings — `CACHE_REDIS_PORT`, `QUEUE_REDIS_PORT`, `RATE_LIMITER_REDIS_PORT` — stay fixed at `6379` regardless, same as every other module).
+> The "Redis host port" column is likewise the **host**-published port. `ez-php/cache`, `ez-php/queue`, and `ez-php/rate-limiter` map it through a separate `REDIS_HOST_PORT` env var in `docker-compose.yml`, keeping `REDIS_PORT` fixed at `6379` for in-container connections (the app container always reaches Redis at `redis:6379` over the Compose network, regardless of the host mapping) — the root project and the `ez-php/` application template are the two exceptions, since both have no host/container split and use `REDIS_PORT` for both (the template's other in-container Redis settings — `CACHE_REDIS_PORT`, `QUEUE_REDIS_PORT`, `RATE_LIMITER_REDIS_PORT`, `HEALTH_REDIS_PORT` — stay fixed at `6379` regardless, same as every other module).
 
 > This table tracks only MySQL, Redis, and Meilisearch ports — the three services shared across multiple modules where a collision is otherwise easy to introduce. Mailpit is the one other service with published host ports: SMTP `1025` and web UI `8025`. `ez-php/mail` maps them through `MAILPIT_SMTP_HOST_PORT`/`MAILPIT_API_HOST_PORT` in `modules/mail/docker-compose.yml` (mirroring the `*_HOST_PORT` pattern above, documented in `modules/mail/.env.example`); the root project and the `ez-php/` template each run their own Mailpit on the same defaults (`MAIL_PORT`/`MAIL_WEB_PORT`), so **these three stacks cannot run at the same time** without overriding those variables. It isn't a table column because no module beyond those three runs Mailpit — but a new module adding its own single-use service's ports should likewise parameterize them and document the defaults in its own `.env.example` rather than adding a column here.
 
@@ -302,8 +302,10 @@ throw `WebSocketException`.
 
 Two-method class:
 - `static parse(string &$buffer): ?Frame` — reads one frame from the front of the buffer,
-  unmasks the payload (client frames are always masked), removes consumed bytes from
-  `$buffer`, returns `null` if the buffer is incomplete.
+  unmasks the payload if the MASK bit is set, records it in `$masked`, removes consumed
+  bytes from `$buffer`, returns `null` if the buffer is incomplete. It deliberately accepts
+  unmasked frames (tests parse the server's own frames with it); `Server` enforces that
+  client frames are masked.
 - `encode(): string` — produces the wire bytes for a server→client frame (never masked).
 
 All byte arithmetic uses `ord()`/`chr()` instead of `pack()`/`unpack()` to avoid
@@ -318,7 +320,9 @@ Extended payload lengths: 126 → 2-byte big-endian; 127 → 8-byte big-endian
 
 Minimal contract. `id()` returns the unique connection string; `isConnected()` tracks
 whether the WebSocket connection is open. `send()` and `sendBinary()` write frames.
-`close()` sends a close frame with status 1000. `requestHeaders()` returns the
+`close()` sends a close frame with status 1000; the concrete `Connection::closeWith($code, $reason)`
+sends any RFC 6455 status (used by `Server` for 1002/1003) and is intentionally not on the interface,
+so existing implementers are unaffected. `requestHeaders()` returns the
 upgrade-request headers (keyed by lowercased name) and `header($name)` looks one up
 case-insensitively — populated by `handshake()`, these let `onOpen()` handlers inspect
 `origin`, `cookie`, or auth headers and `close()` unwanted connections (e.g. Origin
@@ -349,8 +353,10 @@ delegates to `Frame::parse()`. Returns `null` when no complete frame is present 
 ### HandlerInterface (`src/HandlerInterface.php`)
 
 Four lifecycle callbacks. `onMessage()` is only called for `TEXT` and `BINARY` frames;
-control frames (`PING`, `PONG`, `CLOSE`, `CONTINUATION`) are handled internally by the
-`Server` and never forwarded to the handler.
+control frames (`PING`, `PONG`, `CLOSE`) are handled internally by the `Server` and never
+forwarded to the handler. Protocol refusals close the connection before the handler sees the
+frame: an unmasked client frame → close `1002` (RFC 6455 §5.1), and a fragmented message
+(a `TEXT`/`BINARY` frame with FIN=0, or any `CONTINUATION` frame) → close `1003`.
 
 ---
 
@@ -390,9 +396,12 @@ Resource tracking uses `get_resource_id($socket)` as the array key for O(1) look
 - **One Fiber per connection.** PHP 8.1+ Fibers provide cooperative multitasking without
   OS threads. `stream_select()` acts as the I/O event demultiplexer; Fibers are suspended
   on no-data-yet conditions and resumed when the socket becomes readable.
-- **No message fragmentation reassembly.** Continuation frames (`Opcode::CONTINUATION`)
-  are silently ignored. Virtually all browser WebSocket clients send complete messages in
-  a single frame. Reassembly adds significant state-machine complexity for a minimal module.
+- **No message fragmentation reassembly — fragmented messages are refused.** A `TEXT`/`BINARY`
+  frame with FIN=0, or a `CONTINUATION` frame, closes the connection with `1003` (unsupported
+  data). Earlier versions handed the first fragment to `onMessage()` as if complete and dropped
+  the rest, which silently truncated messages. Virtually all browser WebSocket clients send
+  complete messages in a single frame. Reassembly adds significant state-machine complexity
+  for a minimal module.
 - **No TLS (WSS).** TLS termination belongs at the reverse proxy layer (nginx, Caddy).
   The server uses plain TCP; `wss://` is achieved with `ssl://` stream wrappers in a
   future extension.

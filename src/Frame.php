@@ -28,11 +28,14 @@ final class Frame
      * @param Opcode $opcode  Frame type
      * @param string $payload Decoded (unmasked) payload bytes
      * @param bool   $fin     Whether this is the final fragment (FIN bit)
+     * @param bool   $masked  Whether the frame arrived masked (MASK bit). RFC 6455 §5.1:
+     *                        every client→server frame must be masked; Server enforces it.
      */
     public function __construct(
         public readonly Opcode $opcode,
         public readonly string $payload,
         public readonly bool $fin = true,
+        public readonly bool $masked = false,
     ) {
     }
 
@@ -118,7 +121,7 @@ final class Frame
 
         $buffer = substr($buffer, $totalSize);
 
-        return new self($opcode, $payload, $fin);
+        return new self($opcode, $payload, $fin, $masked);
     }
 
     /**

@@ -217,12 +217,25 @@ final class Connection implements ConnectionInterface
      */
     public function close(?string $reason = null): void
     {
+        $this->closeWith(1000, $reason);
+    }
+
+    /**
+     * Sends a close frame with the given RFC 6455 status code and closes the socket.
+     *
+     * Used by Server for protocol-level refusals (1002 protocol error, 1003
+     * unsupported data); close() is the normal-closure (1000) shorthand.
+     *
+     * @param int         $code   Close status code (RFC 6455 §7.4.1)
+     * @param string|null $reason Optional UTF-8 reason text
+     */
+    public function closeWith(int $code, ?string $reason = null): void
+    {
         if (!$this->connected) {
             return;
         }
 
-        // Status code 1000 = Normal Closure
-        $payload = pack('n', 1000);
+        $payload = pack('n', $code);
         if ($reason !== null) {
             $payload .= $reason;
         }

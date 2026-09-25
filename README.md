@@ -110,7 +110,7 @@ Represents one RFC 6455 frame. Available in `HandlerInterface::onMessage()`:
 ```php
 $frame->opcode;   // Opcode::TEXT | Opcode::BINARY
 $frame->payload;  // decoded (unmasked) payload string
-$frame->fin;      // true for complete (non-fragmented) messages
+$frame->fin;      // always true here — fragmented messages are refused (see below)
 ```
 
 ### ChannelManager
@@ -133,7 +133,8 @@ $mgr->count('room');                  // int
 
 ## Architecture notes
 
-- **No message fragmentation reassembly**: continuation frames are silently ignored. Real-world clients send single-frame messages for chat/notifications; large binary transfers should be chunked at the application level.
+- **No message fragmentation reassembly**: a fragmented message (FIN=0 data frame or a continuation frame) closes the connection with status `1003`, rather than delivering a truncated message. Real-world clients send single-frame messages for chat/notifications; large binary transfers should be chunked at the application level.
+- **Unmasked client frames are refused**: per RFC 6455 §5.1 the server closes with status `1002`.
 - **No TLS (WSS)**: terminate TLS at a reverse proxy (nginx, Caddy) and use plain `ws://` internally.
 - **No authentication**: verify cookies or tokens in `onOpen()` and call `$conn->close()` on failure.
 
