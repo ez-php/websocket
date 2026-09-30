@@ -85,6 +85,7 @@ ws.onopen    = () => ws.send('Hello!');
 
 ```php
 $server = new Server(host: '0.0.0.0', port: 8080);
+// optional third argument: maxMessageBytes (default 16 MiB)
 $server->run($handler); // blocks; handles SIGTERM externally
 ```
 
@@ -110,7 +111,7 @@ Represents one RFC 6455 frame. Available in `HandlerInterface::onMessage()`:
 ```php
 $frame->opcode;   // Opcode::TEXT | Opcode::BINARY
 $frame->payload;  // decoded (unmasked) payload string
-$frame->fin;      // always true here — fragmented messages are refused (see below)
+$frame->fin;      // always true here — fragmented messages arrive reassembled (see below)
 ```
 
 ### ChannelManager
@@ -133,7 +134,7 @@ $mgr->count('room');                  // int
 
 ## Architecture notes
 
-- **No message fragmentation reassembly**: a fragmented message (FIN=0 data frame or a continuation frame) closes the connection with status `1003`, rather than delivering a truncated message. Real-world clients send single-frame messages for chat/notifications; large binary transfers should be chunked at the application level.
+- **Fragmented messages are reassembled**: a `TEXT`/`BINARY` frame with FIN=0 and its `CONTINUATION` frames reach `onMessage()` once, as one complete frame. `PING`s between fragments are answered. A stray continuation, a new data frame inside an open message, or a fragmented control frame closes with `1002`. A message larger than `maxMessageBytes` (third constructor argument, default 16 MiB), whether one frame or the sum of its fragments, closes with `1009`. No permessage-deflate.
 - **Unmasked client frames are refused**: per RFC 6455 §5.1 the server closes with status `1002`.
 - **No TLS (WSS)**: terminate TLS at a reverse proxy (nginx, Caddy) and use plain `ws://` internally.
 - **No authentication**: verify cookies or tokens in `onOpen()` and call `$conn->close()` on failure.

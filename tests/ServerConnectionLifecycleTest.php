@@ -162,24 +162,52 @@ final class ServerConnectionLifecycleTest extends TestCase
         self::assertContains('message:bin', $this->log->events);
     }
 
-    public function test_a_fragmented_message_is_refused_with_1003_instead_of_delivered_truncated(): void
+    public function test_a_fragmented_message_is_reassembled_and_delivered_once(): void
     {
         [$peer, $fiber] = $this->startConnection();
         $this->handshake($peer, $fiber);
 
-        fwrite($peer, $this->rawFrame(Opcode::TEXT, 'part-1', fin: false));
-        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, 'part-2', fin: true));
+        fwrite($peer, $this->rawFrame(Opcode::TEXT, 'part-1|', fin: false));
+        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, 'part-2|', fin: false));
+        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, 'part-3', fin: true));
         $fiber->resume();
 
-        $close = $this->readServerFrame($peer);
-        self::assertSame(Opcode::CLOSE, $close->opcode);
-        self::assertSame(1003, unpack('n', $close->payload)[1] ?? null);
-        self::assertNotContains('message:part-1', $this->log->events);
-        self::assertTrue($fiber->isTerminated());
-        self::assertSame('close', end($this->log->events));
+        self::assertSame(['open', 'message:part-1|part-2|part-3'], $this->log->events);
+        self::assertSame('echo:part-1|part-2|part-3', $this->readServerFrame($peer)->payload);
+        self::assertFalse($fiber->isTerminated());
     }
 
-    public function test_a_stray_continuation_frame_is_refused_with_1003(): void
+    public function test_fragments_arriving_across_reads_are_reassembled(): void
+    {
+        [$peer, $fiber] = $this->startConnection();
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::BINARY, 'ab', fin: false));
+        $fiber->resume();
+        self::assertSame(['open'], $this->log->events);
+
+        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, 'cd', fin: true));
+        $fiber->resume();
+
+        self::assertSame(['open', 'message:abcd'], $this->log->events);
+    }
+
+    public function test_a_ping_between_fragments_is_answered_and_the_message_still_completes(): void
+    {
+        [$peer, $fiber] = $this->startConnection();
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::TEXT, 'he', fin: false));
+        fwrite($peer, $this->rawFrame(Opcode::PING, 'p', fin: true));
+        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, 'llo', fin: true));
+        $fiber->resume();
+
+        $pong = $this->readServerFrame($peer);
+        self::assertSame(Opcode::PONG, $pong->opcode);
+        self::assertSame(['open', 'message:hello'], $this->log->events);
+    }
+
+    public function test_a_stray_continuation_frame_is_refused_with_1002(): void
     {
         [$peer, $fiber] = $this->startConnection();
         $this->handshake($peer, $fiber);
@@ -189,7 +217,63 @@ final class ServerConnectionLifecycleTest extends TestCase
 
         $close = $this->readServerFrame($peer);
         self::assertSame(Opcode::CLOSE, $close->opcode);
-        self::assertSame(1003, unpack('n', $close->payload)[1] ?? null);
+        self::assertSame(1002, unpack('n', $close->payload)[1] ?? null);
+        self::assertTrue($fiber->isTerminated());
+    }
+
+    public function test_a_new_data_frame_inside_a_fragmented_message_is_refused_with_1002(): void
+    {
+        [$peer, $fiber] = $this->startConnection();
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::TEXT, 'first', fin: false));
+        fwrite($peer, $this->rawFrame(Opcode::TEXT, 'second', fin: true));
+        $fiber->resume();
+
+        $close = $this->readServerFrame($peer);
+        self::assertSame(1002, unpack('n', $close->payload)[1] ?? null);
+        self::assertNotContains('message:first', $this->log->events);
+        self::assertTrue($fiber->isTerminated());
+    }
+
+    public function test_a_fragmented_control_frame_is_refused_with_1002(): void
+    {
+        [$peer, $fiber] = $this->startConnection();
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::PING, 'p', fin: false));
+        $fiber->resume();
+
+        $close = $this->readServerFrame($peer);
+        self::assertSame(1002, unpack('n', $close->payload)[1] ?? null);
+        self::assertTrue($fiber->isTerminated());
+    }
+
+    public function test_a_reassembled_message_over_the_size_limit_is_refused_with_1009(): void
+    {
+        [$peer, $fiber] = $this->startConnection(maxMessageBytes: 8);
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->rawFrame(Opcode::TEXT, '12345', fin: false));
+        fwrite($peer, $this->rawFrame(Opcode::CONTINUATION, '6789', fin: true));
+        $fiber->resume();
+
+        $close = $this->readServerFrame($peer);
+        self::assertSame(1009, unpack('n', $close->payload)[1] ?? null);
+        self::assertSame(['open', 'close'], $this->log->events);
+        self::assertTrue($fiber->isTerminated());
+    }
+
+    public function test_a_single_frame_over_the_size_limit_is_refused_with_1009(): void
+    {
+        [$peer, $fiber] = $this->startConnection(maxMessageBytes: 4);
+        $this->handshake($peer, $fiber);
+
+        fwrite($peer, $this->maskedFrame(Opcode::TEXT, 'too-long'));
+        $fiber->resume();
+
+        $close = $this->readServerFrame($peer);
+        self::assertSame(1009, unpack('n', $close->payload)[1] ?? null);
         self::assertTrue($fiber->isTerminated());
     }
 
@@ -344,7 +428,7 @@ final class ServerConnectionLifecycleTest extends TestCase
      *
      * @return array{0: resource, 1: Fiber<mixed, mixed, mixed, mixed>} The peer end and the (suspended) fiber.
      */
-    private function startConnection(): array
+    private function startConnection(int $maxMessageBytes = Server::DEFAULT_MAX_MESSAGE_BYTES): array
     {
         $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         self::assertNotFalse($pair);
@@ -352,7 +436,7 @@ final class ServerConnectionLifecycleTest extends TestCase
         stream_set_blocking($serverSide, false);
         stream_set_blocking($peer, false);
 
-        $server = new Server('127.0.0.1', 0);
+        $server = new Server('127.0.0.1', 0, $maxMessageBytes);
         $conn = new Connection($serverSide, '1');
         $method = new ReflectionMethod($server, 'handleConnection');
 

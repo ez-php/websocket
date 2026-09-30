@@ -28,10 +28,11 @@ docker compose exec app composer full
 Executes in order:
 1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
 2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
-3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+3. `check_module_deps.php` — fails when a package's code imports an ez-php package its `composer.json` does not declare (module `src`: `require`/`suggest`; tests: `require`/`require-dev` and their dependencies), or requires one it never uses
+4. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+5. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-5. `phpunit` — all tests with coverage
+6. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
@@ -40,6 +41,7 @@ composer cs                  # CS Fixer only
 composer test                # PHPUnit only
 composer guidelines:check    # CLAUDE.md drift only
 composer test-classes:check  # duplicate test class names only
+composer module-deps:check   # undeclared / unused ez-php package dependencies only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -198,20 +200,22 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch/Memcached/Mailpit service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
 vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
+vendor/bin/docker-init --services=memcached,mailpit
 ```
 
-Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`:
+Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`, `memcached`, `apcu` (with `apc.enable_cli=1`):
 
 ```
 vendor/bin/docker-init --extensions=gmp,bcmath
 vendor/bin/docker-init --extensions=gd,imagick
+vendor/bin/docker-init --extensions=memcached,apcu
 ```
 
 When run from a module directory inside this monorepo, any requested extension not already present is also merged into the shared root `docker/app/Dockerfile` — the container `composer full` at the root actually runs against, distinct from the module's own standalone image.
@@ -271,6 +275,7 @@ src/
 ├── Connection.php            — stream-socket implementation; handshake(), readFrame(), sendPong()
 ├── HandlerInterface.php      — onOpen(), onMessage(), onClose(), onError() lifecycle callbacks
 ├── ChannelManager.php        — subscribe/unsubscribe/broadcast pub/sub on named channels
+├── ConnectionLifecycle.php   — per-connection handshake → frame loop → close; masking check, reassembly, 1002/1009 (shared with ez-php/websocket-tls)
 └── Server.php                — Fiber event loop; stream_socket_server + stream_select
 
 tests/
@@ -359,8 +364,11 @@ delegates to `Frame::parse()`. Returns `null` when no complete frame is present 
 Four lifecycle callbacks. `onMessage()` is only called for `TEXT` and `BINARY` frames;
 control frames (`PING`, `PONG`, `CLOSE`) are handled internally by the `Server` and never
 forwarded to the handler. Protocol refusals close the connection before the handler sees the
-frame: an unmasked client frame → close `1002` (RFC 6455 §5.1), and a fragmented message
-(a `TEXT`/`BINARY` frame with FIN=0, or any `CONTINUATION` frame) → close `1003`.
+frame: an unmasked client frame → close `1002` (RFC 6455 §5.1). A fragmented message is
+reassembled first and delivered once as a single `fin: true` frame with the first fragment's
+opcode; control frames between fragments are handled as usual. A `CONTINUATION` without an open
+message, a new `TEXT`/`BINARY` while one is open, or a control frame with FIN=0 → close `1002`
+(RFC 6455 §5.4/§5.5); a message over `maxMessageBytes` → close `1009`.
 
 ---
 
@@ -383,7 +391,8 @@ Event loop responsibilities:
 4. New connection on server socket → `stream_set_blocking($clientSocket, false)`,
    create `Connection`, spawn `Fiber`, call `$fiber->start()`
 5. Readable client socket → `$fiber->resume()`; reap terminated Fibers
-6. `handleConnection()` runs inside the Fiber: handshake → `onOpen` → frame loop
+6. `handleConnection()` runs inside the Fiber and delegates to
+   `ConnectionLifecycle::run()`: handshake → `onOpen` → frame loop
    (`readFrame()` returns null → `Fiber::suspend()`) → `onClose`
 
 Resource tracking uses `get_resource_id($socket)` as the array key for O(1) lookups
@@ -400,12 +409,19 @@ Resource tracking uses `get_resource_id($socket)` as the array key for O(1) look
 - **One Fiber per connection.** PHP 8.1+ Fibers provide cooperative multitasking without
   OS threads. `stream_select()` acts as the I/O event demultiplexer; Fibers are suspended
   on no-data-yet conditions and resumed when the socket becomes readable.
-- **No message fragmentation reassembly — fragmented messages are refused.** A `TEXT`/`BINARY`
-  frame with FIN=0, or a `CONTINUATION` frame, closes the connection with `1003` (unsupported
-  data). Earlier versions handed the first fragment to `onMessage()` as if complete and dropped
-  the rest, which silently truncated messages. Virtually all browser WebSocket clients send
-  complete messages in a single frame. Reassembly adds significant state-machine complexity
-  for a minimal module.
+- **The frame loop lives in `ConnectionLifecycle`, not in `Server`.** `ez-php/websocket-tls`'s
+  `TlsServer` runs its own accept loop (it cannot extend the `final` `Server`) and used to carry
+  a copy of the frame loop — which had none of the masking, fragmentation and size checks below.
+  Both servers now call the same public `ConnectionLifecycle::run()`, so a protocol fix lands once.
+- **Fragmented messages are reassembled in `ConnectionLifecycle::run()`.** Two local
+  variables per connection (the open message's opcode and its payload so far) are the whole
+  state machine — the Fiber keeps them across reads. The handler never sees fragments: it gets
+  one `Frame` with `fin: true`. Earlier versions first handed the first fragment over as if
+  complete (silent truncation), then refused fragmented messages with `1003`, which disconnected
+  RFC-compliant clients sending large messages. `maxMessageBytes` (constructor, default 16 MiB =
+  `Frame`'s per-frame cap) bounds the buffer per connection — without it a client could grow
+  memory without limit through many small fragments. No permessage-deflate, and TEXT payloads
+  are not UTF-8-validated (neither were single frames).
 - **No TLS (WSS).** TLS termination belongs at the reverse proxy layer (nginx, Caddy).
   The server uses plain TCP; `wss://` is achieved with `ssl://` stream wrappers in a
   future extension.
@@ -435,7 +451,7 @@ No external infrastructure required. All tests run in-process.
 - `ChannelManagerTest` — PHPUnit mocks for `ConnectionInterface`; subscribe, unsubscribe,
   unsubscribeAll, broadcast sends/skips/prunes, channel lifecycle
 - `ServerTest` — constructor, accessors, `run()` throws `WebSocketException` on port conflict
-- `ServerConnectionLifecycleTest` — `Server::run()` never returns, so the private lifecycle methods are driven directly by reflection: `handleConnection()` in a `Fiber` over a `stream_socket_pair` (upgrade, text/binary/ping/pong/close, invalid upgrade, handler exception, peer disconnect), `acceptConnection()` against a real loopback listener, and `loop()` itself — the test's handler sends its frames from `onOpen` and escapes the loop by throwing from `onError`. Deterministic, no child process, and visible to the coverage driver (Server ≈ 90 % lines)
+- `ServerConnectionLifecycleTest` — `Server::run()` never returns, so the private lifecycle methods are driven directly by reflection: `handleConnection()` in a `Fiber` over a `stream_socket_pair` (upgrade, text/binary/ping/pong/close, fragment reassembly incl. interleaved PING and 1002/1009 refusals, invalid upgrade, handler exception, peer disconnect), `acceptConnection()` against a real loopback listener, and `loop()` itself — the test's handler sends its frames from `onOpen` and escapes the loop by throwing from `onError`. Deterministic, no child process, and visible to the coverage driver (Server ≈ 90 % lines)
 
 Full integration tests (multiple concurrent WebSocket clients) require a separate test
 process and are out of scope for this suite.
@@ -448,7 +464,6 @@ process and are out of scope for this suite.
 |---------|-----------------|
 | SSE / server-sent events | `ez-php/broadcast` |
 | TLS / WSS | Reverse proxy or a future `ez-php/websocket-tls` extension |
-| Message fragmentation reassembly | Application layer or future extension |
 | Authentication / authorization | Application handler (`onOpen()`: inspect `header('origin')`/`header('cookie')`, then `$conn->close()` to reject) |
 | Persistent connection state across restarts | External store (Redis, DB) |
 | Push gateway / relay to external clients | Application layer |

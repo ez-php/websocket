@@ -50,12 +50,21 @@ final class Server
     private int $nextId = 1;
 
     /**
-     * @param string $host Bind address (e.g. '0.0.0.0' or '127.0.0.1')
-     * @param int    $port TCP port to listen on
+     * Default upper bound for one message, single-frame or reassembled (16 MiB,
+     * the same as Frame's per-frame limit).
+     */
+    public const int DEFAULT_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+
+    /**
+     * @param string $host            Bind address (e.g. '0.0.0.0' or '127.0.0.1')
+     * @param int    $port            TCP port to listen on
+     * @param int    $maxMessageBytes Largest message delivered to the handler; a bigger one
+     *                                (one frame, or fragments adding up) closes with 1009.
      */
     public function __construct(
         private readonly string $host = '0.0.0.0',
         private readonly int $port = 8080,
+        private readonly int $maxMessageBytes = self::DEFAULT_MAX_MESSAGE_BYTES,
     ) {
     }
 
@@ -202,54 +211,12 @@ final class Server
     }
 
     /**
-     * Connection lifecycle: handshake → frame loop → close.
+     * Connection lifecycle: handshake → frame loop → close (see ConnectionLifecycle).
      * Runs inside a Fiber; suspends when no data is available.
      */
     private function handleConnection(Connection $conn, HandlerInterface $handler): void
     {
-        try {
-            $conn->handshake();
-        } catch (HandshakeException $e) {
-            $handler->onError($conn, $e);
-            return;
-        }
-
-        $handler->onOpen($conn);
-
-        try {
-            while ($conn->isConnected()) {
-                $frame = $conn->readFrame();
-
-                if ($frame === null) {
-                    Fiber::suspend();
-                    continue;
-                }
-
-                // RFC 6455 §5.1: a server MUST close the connection on an unmasked client frame.
-                if (!$frame->masked) {
-                    $conn->closeWith(1002, 'Client frames must be masked.');
-                    break;
-                }
-
-                // Fragmented messages are not reassembled. Refuse them (1003 unsupported
-                // data) rather than hand the first fragment to the handler as if complete.
-                if ($frame->opcode === Opcode::CONTINUATION || (!$frame->fin && ($frame->opcode === Opcode::TEXT || $frame->opcode === Opcode::BINARY))) {
-                    $conn->closeWith(1003, 'Fragmented messages are not supported.');
-                    break;
-                }
-
-                match ($frame->opcode) {
-                    Opcode::TEXT, Opcode::BINARY => $handler->onMessage($conn, $frame),
-                    Opcode::CLOSE => $conn->close(),
-                    Opcode::PING => $conn->sendPong($frame->payload),
-                    Opcode::PONG => null,
-                };
-            }
-        } catch (\Throwable $e) {
-            $handler->onError($conn, $e);
-        } finally {
-            $handler->onClose($conn);
-        }
+        (new ConnectionLifecycle($this->maxMessageBytes))->run($conn, $handler);
     }
 
     /**
