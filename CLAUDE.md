@@ -423,9 +423,10 @@ Resource tracking uses `get_resource_id($socket)` as the array key for O(1) look
   `Frame`'s per-frame cap) bounds the buffer per connection — without it a client could grow
   memory without limit through many small fragments. No permessage-deflate, and TEXT payloads
   are not UTF-8-validated (neither were single frames).
-- **No TLS (WSS).** TLS termination belongs at the reverse proxy layer (nginx, Caddy).
-  The server uses plain TCP; `wss://` is achieved with `ssl://` stream wrappers in a
-  future extension.
+- **No TLS (WSS) in this module.** The server speaks plain TCP. `wss://` is either
+  terminated at the reverse proxy (nginx, Caddy) or by `ez-php/websocket-tls`, which
+  listens on `tcp://` with the certificate in the stream context, negotiates TLS in its
+  own Fiber loop and hands the connections to this server.
 - **Non-blocking mode controlled by Server, not Connection.** This separation allows
   test code to use blocking UNIX socket pairs (via `stream_socket_pair`) without
   interference from the blocking-mode setting.
@@ -464,7 +465,7 @@ process and are out of scope for this suite.
 | Concern | Where it belongs |
 |---------|-----------------|
 | SSE / server-sent events | `ez-php/broadcast` |
-| TLS / WSS | Reverse proxy or a future `ez-php/websocket-tls` extension |
+| TLS / WSS | `ez-php/websocket-tls` or a reverse proxy |
 | Authentication / authorization | Application handler (`onOpen()`: inspect `header('origin')`/`header('cookie')`, then `$conn->close()` to reject) |
 | Persistent connection state across restarts | External store (Redis, DB) |
 | Push gateway / relay to external clients | Application layer |
