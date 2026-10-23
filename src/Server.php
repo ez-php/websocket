@@ -60,11 +60,14 @@ final class Server
      * @param int    $port            TCP port to listen on
      * @param int    $maxMessageBytes Largest message delivered to the handler; a bigger one
      *                                (one frame, or fragments adding up) closes with 1009.
+     * @param list<string> $subprotocols Subprotocols to negotiate (`Sec-WebSocket-Protocol`), in
+     *                                   preference order — e.g. `['graphql-transport-ws']`.
      */
     public function __construct(
         private readonly string $host = '0.0.0.0',
         private readonly int $port = 8080,
         private readonly int $maxMessageBytes = self::DEFAULT_MAX_MESSAGE_BYTES,
+        private readonly array $subprotocols = [],
     ) {
     }
 
@@ -192,7 +195,7 @@ final class Server
 
         stream_set_blocking($clientSocket, false);
 
-        $conn = new Connection($clientSocket, (string) $this->nextId++);
+        $conn = new Connection($clientSocket, (string) $this->nextId++, $this->subprotocols);
         $rid = get_resource_id($clientSocket);
 
         $this->connections[$rid] = $conn;

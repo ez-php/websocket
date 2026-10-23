@@ -419,4 +419,84 @@ final class ConnectionTest extends TestCase
 
         fclose($client);
     }
+
+    public function testHandshakeEchoesFirstSupportedSubprotocol(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        $request = str_replace(
+            "Sec-WebSocket-Version: 13\r\n",
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: chat, graphql-transport-ws\r\n",
+            $this->upgradeRequest(base64_encode(random_bytes(16))),
+        );
+        fwrite($client, $request);
+
+        $conn = new Connection($server, '1', ['graphql-transport-ws', 'chat']);
+        $conn->handshake();
+
+        $response = fread($client, 512);
+        self::assertIsString($response);
+        self::assertSame('graphql-transport-ws', $conn->subprotocol());
+        self::assertStringContainsString("Sec-WebSocket-Protocol: graphql-transport-ws\r\n", $response);
+
+        fclose($client);
+    }
+
+    public function testHandshakeSelectsNoSubprotocolWhenNoneMatches(): void
+    {
+        [$server, $client] = $this->socketPair();
+
+        $request = str_replace(
+            "Sec-WebSocket-Version: 13\r\n",
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: chat\r\n",
+            $this->upgradeRequest(base64_encode(random_bytes(16))),
+        );
+        fwrite($client, $request);
+
+        $conn = new Connection($server, '1', ['graphql-transport-ws']);
+        $conn->handshake();
+
+        $response = fread($client, 512);
+        self::assertIsString($response);
+        self::assertNull($conn->subprotocol());
+        self::assertStringNotContainsString('Sec-WebSocket-Protocol', $response);
+
+        fclose($client);
+    }
+
+    public function testHandshakeSelectsNoSubprotocolWhenClientOffersNone(): void
+    {
+        [$server, $client] = $this->socketPair();
+        fwrite($client, $this->upgradeRequest(base64_encode(random_bytes(16))));
+
+        $conn = new Connection($server, '1', ['graphql-transport-ws']);
+        $conn->handshake();
+        fread($client, 512);
+
+        self::assertNull($conn->subprotocol());
+
+        fclose($client);
+    }
+
+    public function testCloseWithSendsGivenStatusCodeAndReason(): void
+    {
+        [$server, $client] = $this->socketPair();
+        fwrite($client, $this->upgradeRequest(base64_encode(random_bytes(16))));
+
+        $conn = new Connection($server, '1');
+        $conn->handshake();
+        fread($client, 512);
+
+        $conn->closeWith(4409, 'Subscriber already exists');
+
+        self::assertFalse($conn->isConnected());
+
+        $raw = (string) fread($client, 512);
+        $frame = Frame::parse($raw);
+        self::assertNotNull($frame);
+        self::assertSame(Opcode::CLOSE, $frame->opcode);
+        self::assertSame(pack('n', 4409) . 'Subscriber already exists', $frame->payload);
+
+        fclose($client);
+    }
 }

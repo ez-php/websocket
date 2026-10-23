@@ -40,13 +40,18 @@ final class Connection implements ConnectionInterface
     /** @var array<string, string> Upgrade-request headers, keyed by lowercased name. */
     private array $requestHeaders = [];
 
+    private ?string $subprotocol = null;
+
     /**
-     * @param resource $socket Stream socket (blocking mode left to caller)
-     * @param string   $id     Unique identifier for this connection
+     * @param resource     $socket       Stream socket (blocking mode left to caller)
+     * @param string       $id           Unique identifier for this connection
+     * @param list<string> $subprotocols Subprotocols the server supports, in preference order;
+     *                                   the first one the client also offers is selected (RFC 6455 §4.2.2)
      */
     public function __construct(
         $socket,
         private readonly string $id,
+        private readonly array $subprotocols = [],
     ) {
         $this->socket = $socket;
     }
@@ -137,10 +142,13 @@ final class Connection implements ConnectionInterface
             sha1($key . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true)
         );
 
+        $this->subprotocol = $this->negotiateSubprotocol();
+
         $response = "HTTP/1.1 101 Switching Protocols\r\n"
             . "Upgrade: websocket\r\n"
             . "Connection: Upgrade\r\n"
             . "Sec-WebSocket-Accept: {$accept}\r\n"
+            . ($this->subprotocol !== null ? "Sec-WebSocket-Protocol: {$this->subprotocol}\r\n" : '')
             . "\r\n";
 
         fwrite($this->socket, $response);
@@ -246,6 +254,15 @@ final class Connection implements ConnectionInterface
     }
 
     /**
+     * Returns the subprotocol selected during the handshake, or `null` when the
+     * client offered none of the server's subprotocols (or none are configured).
+     */
+    public function subprotocol(): ?string
+    {
+        return $this->subprotocol;
+    }
+
+    /**
      * Returns the upgrade-request headers, keyed by lowercased name.
      *
      * Populated by `handshake()`; empty before the handshake completes.
@@ -287,6 +304,23 @@ final class Connection implements ConnectionInterface
      * @throws HandshakeException when a required header is missing or has
      *                            an unexpected value
      */
+    /**
+     * Picks the first server-supported subprotocol the client offered in
+     * `Sec-WebSocket-Protocol` (a comma-separated list), or `null`.
+     */
+    private function negotiateSubprotocol(): ?string
+    {
+        $offered = array_map('trim', explode(',', $this->requestHeaders['sec-websocket-protocol'] ?? ''));
+
+        foreach ($this->subprotocols as $supported) {
+            if (in_array($supported, $offered, true)) {
+                return $supported;
+            }
+        }
+
+        return null;
+    }
+
     private function assertValidUpgradeRequest(): void
     {
         $upgrade = strtolower($this->requestHeaders['upgrade'] ?? '');

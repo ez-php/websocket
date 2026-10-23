@@ -85,7 +85,7 @@ ws.onopen    = () => ws.send('Hello!');
 
 ```php
 $server = new Server(host: '0.0.0.0', port: 8080);
-// optional third argument: maxMessageBytes (default 16 MiB)
+// optional: maxMessageBytes (default 16 MiB), subprotocols (e.g. ['graphql-transport-ws'])
 $server->run($handler); // blocks; handles SIGTERM externally
 ```
 
@@ -102,6 +102,8 @@ $conn->isConnected();   // false after close() or peer disconnect
 $conn->send('text');    // UTF-8 TEXT frame
 $conn->sendBinary($b);  // BINARY frame
 $conn->close('bye');    // clean close with status 1000
+$conn->closeWith(4400, 'Invalid message'); // close with an explicit status code
+$conn->subprotocol();   // negotiated Sec-WebSocket-Protocol, or null
 ```
 
 ### Frame

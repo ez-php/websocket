@@ -44,6 +44,22 @@ interface ConnectionInterface
     public function close(?string $reason = null): void;
 
     /**
+     * Initiates a close handshake with an explicit status code — RFC 6455 codes
+     * (e.g. 1008 policy violation) or an application-defined 4000–4999 code, as
+     * subprotocols like graphql-transport-ws require.
+     *
+     * @param int         $code   Close status code (RFC 6455 §7.4)
+     * @param string|null $reason Optional close reason appended after the status code
+     */
+    public function closeWith(int $code, ?string $reason = null): void;
+
+    /**
+     * Returns the subprotocol negotiated during the handshake
+     * (`Sec-WebSocket-Protocol`), or `null` when none was selected.
+     */
+    public function subprotocol(): ?string;
+
+    /**
      * Returns the HTTP headers sent with the upgrade request, keyed by
      * lowercased header name. Empty until `handshake()` has completed.
      *

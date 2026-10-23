@@ -152,7 +152,7 @@ php make_module.php <name> --description="..." --services=mysql,redis --extensio
 `<name>` is the kebab-case package name; the namespace is derived as
 `EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
 overrides it. Existing exceptions the guess gets wrong: `bignum` → `BigNum`,
-`dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `oauth` → `OAuth`,
+`dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `graphql-subscriptions` → `GraphQLSubscriptions`, `oauth` → `OAuth`,
 `opcache` → `OPCache`, `openapi` → `OpenApi`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
 `websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
 `webauthn-metadata` → `WebauthnMetadata` and `metrics-statsd` → `MetricsStatsd` are
@@ -272,8 +272,8 @@ src/
 ├── HandshakeException.php    — HTTP→WebSocket upgrade failure (extends WebSocketException)
 ├── Opcode.php                — int-backed enum: CONTINUATION, TEXT, BINARY, CLOSE, PING, PONG
 ├── Frame.php                 — RFC 6455 frame: parse(string &$buffer): ?Frame, encode(): string
-├── ConnectionInterface.php   — id(), isConnected(), send(), sendBinary(), close(), requestHeaders(), header()
-├── Connection.php            — stream-socket implementation; handshake(), readFrame(), sendPong()
+├── ConnectionInterface.php   — id(), isConnected(), send(), sendBinary(), close(), closeWith(), subprotocol(), requestHeaders(), header()
+├── Connection.php            — stream-socket implementation; handshake() (incl. subprotocol negotiation), readFrame(), sendPong()
 ├── HandlerInterface.php      — onOpen(), onMessage(), onClose(), onError() lifecycle callbacks
 ├── ChannelManager.php        — subscribe/unsubscribe/broadcast pub/sub on named channels
 ├── ConnectionLifecycle.php   — per-connection handshake → frame loop → close; masking check, reassembly, 1002/1009 (shared with ez-php/websocket-tls)
@@ -330,9 +330,11 @@ Extended payload lengths: 126 → 2-byte big-endian; 127 → 8-byte big-endian
 
 Minimal contract. `id()` returns the unique connection string; `isConnected()` tracks
 whether the WebSocket connection is open. `send()` and `sendBinary()` write frames.
-`close()` sends a close frame with status 1000; the concrete `Connection::closeWith($code, $reason)`
-sends any RFC 6455 status (used by `Server` for 1002/1003) and is intentionally not on the interface,
-so existing implementers are unaffected. `requestHeaders()` returns the
+`close()` sends a close frame with status 1000; `closeWith($code, $reason)` sends any status —
+RFC 6455 codes (used by `Server` for 1002/1003) or application codes 4000–4999. It moved onto the
+interface (it used to exist only on `Connection`) because subprotocol handlers such as
+`ez-php/graphql-subscriptions` must close with protocol-defined 44xx codes through the interface
+they receive; `subprotocol()` returns the subprotocol negotiated in the handshake (or `null`). `requestHeaders()` returns the
 upgrade-request headers (keyed by lowercased name) and `header($name)` looks one up
 case-insensitively — populated by `handshake()`, these let `onOpen()` handlers inspect
 `origin`, `cookie`, or auth headers and `close()` unwanted connections (e.g. Origin
@@ -352,6 +354,11 @@ is yet available (checked with `Fiber::getCurrent() !== null`). Computes `Sec-We
 via `base64_encode(sha1($key . GUID, true))`. It also parses the request header block
 (only up to the terminating `\r\n\r\n`) into a lowercased-key map exposed via
 `requestHeaders()`/`header()`, so `onOpen()` handlers can perform Origin/cookie checks.
+Subprotocol negotiation: the constructor's optional `list<string> $subprotocols` (passed down
+from `Server`) lists the supported subprotocols in preference order; `handshake()` selects the
+first one the client offered in `Sec-WebSocket-Protocol` and echoes it in the 101 response —
+browsers abort a handshake that requested a subprotocol and got none back. No match (or no
+list) means no header and `subprotocol() === null`; the handler decides whether to close.
 
 `readFrame()` does one non-blocking `fread()`, appends to an internal buffer, then
 delegates to `Frame::parse()`. Returns `null` when no complete frame is present yet.
