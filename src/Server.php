@@ -49,6 +49,8 @@ final class Server
 
     private int $nextId = 1;
 
+    private readonly LoopHooks $hooks;
+
     /**
      * Default upper bound for one message, single-frame or reassembled (16 MiB,
      * the same as Frame's per-frame limit).
@@ -69,6 +71,18 @@ final class Server
         private readonly int $maxMessageBytes = self::DEFAULT_MAX_MESSAGE_BYTES,
         private readonly array $subprotocols = [],
     ) {
+        $this->hooks = new LoopHooks();
+    }
+
+    /**
+     * Extension points of the event loop: extra read streams (e.g. a Redis Pub/Sub
+     * socket) and per-iteration tick callbacks (timers). Register them before run().
+     *
+     * @return LoopHooks
+     */
+    public function hooks(): LoopHooks
+    {
+        return $this->hooks;
     }
 
     /**
@@ -141,6 +155,9 @@ final class Server
             foreach ($this->sockets as $socket) {
                 $read[] = $socket;
             }
+            foreach ($this->hooks->readStreams() as $stream) {
+                $read[] = $stream;
+            }
 
             $write = null;
             $except = null;
@@ -158,6 +175,8 @@ final class Server
 
                 if ($readable === $serverSocket) {
                     $this->acceptConnection($handler, $serverSocket);
+                } elseif ($this->hooks->dispatchReadable($readable)) {
+                    continue;
                 } else {
                     $rid = get_resource_id($readable);
                     $fiber = $this->fibers[$rid] ?? null;
@@ -176,6 +195,8 @@ final class Server
                     $this->removeConnection($rid);
                 }
             }
+
+            $this->hooks->tick();
         }
     }
 

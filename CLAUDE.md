@@ -278,7 +278,8 @@ src/
 ├── HandlerInterface.php      — onOpen(), onMessage(), onClose(), onError() lifecycle callbacks
 ├── ChannelManager.php        — subscribe/unsubscribe/broadcast pub/sub on named channels
 ├── ConnectionLifecycle.php   — per-connection handshake → frame loop → close; masking check, reassembly, 1002/1009 (shared with ez-php/websocket-tls)
-└── Server.php                — Fiber event loop; stream_socket_server + stream_select
+├── LoopHooks.php             — loop extension points: extra read streams (addReadStream) and per-iteration ticks (onTick); shared with ez-php/websocket-tls
+└── Server.php                — Fiber event loop; stream_socket_server + stream_select; hooks() exposes LoopHooks
 
 tests/
 ├── TestCase.php
@@ -287,6 +288,7 @@ tests/
 ├── ConnectionTest.php        — handshake, send, readFrame, close — using UNIX socket pairs
 ├── ChannelManagerTest.php    — subscribe/unsubscribe/broadcast with PHPUnit mocks
 ├── ServerTest.php            — constructor, accessors, run() throws on port conflict
+├── WebSocketLoopHooksTest.php — LoopHooks dispatch/removal/ticks, and a real Server::run() watching a hook stream until a tick stops it
 └── ServerConnectionLifecycleTest.php — in-process: handleConnection over socket pairs, acceptConnection on a loopback listener, loop() left via a handler exception
 ```
 
@@ -403,6 +405,11 @@ Event loop responsibilities:
 6. `handleConnection()` runs inside the Fiber and delegates to
    `ConnectionLifecycle::run()`: handshake → `onOpen` → frame loop
    (`readFrame()` returns null → `Fiber::suspend()`) → `onClose`
+
+7. `hooks()` (`LoopHooks`) adds application streams to the same `stream_select()` (their callback runs when
+   readable — e.g. a Redis Pub/Sub socket, `ez-php/graphql-subscriptions`' relay) and tick callbacks run at
+   the end of every iteration (≤ ~50 ms apart; timers such as an init timeout). Callbacks run on the loop's
+   stack, outside any Fiber; an exception from one ends `run()`.
 
 Resource tracking uses `get_resource_id($socket)` as the array key for O(1) lookups
 (`array<int, Connection>`, `array<int, Fiber>`, `array<int, resource>`).
