@@ -93,7 +93,7 @@ $server->run($handler); // blocks; handles SIGTERM externally
 - Spawns one `Fiber` per accepted connection
 - Non-blocking `stream_select()` event loop resumes Fibers when sockets are readable
 - Handles PING→PONG and CLOSE frames automatically
-- `$server->hooks()` lets other code join the loop: `addReadStream($stream, fn ($s) => …)` watches an extra socket (e.g. Redis Pub/Sub), `onTick(fn () => …)` runs on every iteration (≈ every 50 ms) for timers
+- `$server->hooks()` lets other code join the loop: `addReadStream($stream, fn ($s) => …)` watches an extra socket (e.g. Redis Pub/Sub), `removeReadStream($stream)` stops watching it (call it before closing the stream, e.g. when the Redis connection drops), `onTick(fn () => …)` runs on every iteration (≈ every 50 ms) for timers
 
 ### ConnectionInterface / Connection
 
