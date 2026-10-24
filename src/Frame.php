@@ -30,12 +30,15 @@ final class Frame
      * @param bool   $fin     Whether this is the final fragment (FIN bit)
      * @param bool   $masked  Whether the frame arrived masked (MASK bit). RFC 6455 §5.1:
      *                        every client→server frame must be masked; Server enforces it.
+     * @param bool   $rsv1    RSV1 bit — set on the first frame of a permessage-deflate compressed
+     *                        message (RFC 7692 §6). RSV2/RSV3 are never valid here.
      */
     public function __construct(
         public readonly Opcode $opcode,
         public readonly string $payload,
         public readonly bool $fin = true,
         public readonly bool $masked = false,
+        public readonly bool $rsv1 = false,
     ) {
     }
 
@@ -60,7 +63,13 @@ final class Frame
         $b1 = ord($buffer[1]);
 
         $fin = ($b0 & 0x80) !== 0;
+        $rsv1 = ($b0 & 0x40) !== 0;
         $opcodeInt = $b0 & 0x0F;
+
+        // RFC 6455 §5.2: RSV2/RSV3 must be 0 — no extension defining them is ever negotiated.
+        if (($b0 & 0x30) !== 0) {
+            throw new WebSocketException('WebSocket frame uses reserved bits RSV2/RSV3.');
+        }
         $opcode = Opcode::tryFrom($opcodeInt);
 
         if ($opcode === null) {
@@ -121,7 +130,7 @@ final class Frame
 
         $buffer = substr($buffer, $totalSize);
 
-        return new self($opcode, $payload, $fin, $masked);
+        return new self($opcode, $payload, $fin, $masked, $rsv1);
     }
 
     /**
@@ -133,7 +142,7 @@ final class Frame
      */
     public function encode(): string
     {
-        $b0 = ($this->fin ? 0x80 : 0x00) | $this->opcode->value;
+        $b0 = ($this->fin ? 0x80 : 0x00) | ($this->rsv1 ? 0x40 : 0x00) | $this->opcode->value;
         $len = strlen($this->payload);
 
         if ($len <= 125) {

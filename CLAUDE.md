@@ -272,12 +272,15 @@ src/
 ├── WebSocketException.php    — base exception for the module
 ├── HandshakeException.php    — HTTP→WebSocket upgrade failure (extends WebSocketException)
 ├── Opcode.php                — int-backed enum: CONTINUATION, TEXT, BINARY, CLOSE, PING, PONG
-├── Frame.php                 — RFC 6455 frame: parse(string &$buffer): ?Frame, encode(): string
+├── Frame.php                 — RFC 6455 frame: parse(string &$buffer): ?Frame, encode(): string; RSV1 flag, RSV2/RSV3 rejected
+├── MessageTooBigException.php — inflated message over the limit (→ 1009)
+├── PerMessageDeflateConfig.php — opt-in permessage-deflate settings: no-context-takeover flags, zlib level
+├── PerMessageDeflate.php     — RFC 7692 negotiation (server accept(), client offer()/fromResponse()) and per-connection codec (compress/decompress with output limit); shared with ez-php/websocket-client
 ├── ConnectionInterface.php   — id(), isConnected(), send(), sendBinary(), close(), closeWith(), subprotocol(), requestHeaders(), header()
 ├── Connection.php            — stream-socket implementation; handshake() (incl. subprotocol negotiation), readFrame(), sendPong()
 ├── HandlerInterface.php      — onOpen(), onMessage(), onClose(), onError() lifecycle callbacks
 ├── ChannelManager.php        — subscribe/unsubscribe/broadcast pub/sub on named channels
-├── ConnectionLifecycle.php   — per-connection handshake → frame loop → close; masking check, reassembly, 1002/1009 (shared with ez-php/websocket-tls)
+├── ConnectionLifecycle.php   — per-connection handshake → frame loop → close; masking check, reassembly, RSV1/inflate, 1002/1007/1009 (shared with ez-php/websocket-tls)
 ├── LoopHooks.php             — loop extension points: extra read streams (addReadStream) and per-iteration ticks (onTick); shared with ez-php/websocket-tls
 └── Server.php                — Fiber event loop; stream_socket_server + stream_select; hooks() exposes LoopHooks
 
@@ -289,6 +292,7 @@ tests/
 ├── ChannelManagerTest.php    — subscribe/unsubscribe/broadcast with PHPUnit mocks
 ├── ServerTest.php            — constructor, accessors, run() throws on port conflict
 ├── WebSocketLoopHooksTest.php — LoopHooks dispatch/removal/ticks, and a real Server::run() watching a hook stream until a tick stops it
+├── WebSocketPerMessageDeflateTest.php — negotiation (offers, flags, window bits, bad responses), codec round trips with/without context takeover, inflate limit, lifecycle: fragmented compressed message, compressed replies, RSV1 refusals, 1009/1007
 └── ServerConnectionLifecycleTest.php — in-process: handleConnection over socket pairs, acceptConnection on a loopback listener, loop() left via a handler exception
 ```
 
@@ -436,8 +440,20 @@ Resource tracking uses `get_resource_id($socket)` as the array key for O(1) look
   complete (silent truncation), then refused fragmented messages with `1003`, which disconnected
   RFC-compliant clients sending large messages. `maxMessageBytes` (constructor, default 16 MiB =
   `Frame`'s per-frame cap) bounds the buffer per connection — without it a client could grow
-  memory without limit through many small fragments. No permessage-deflate, and TEXT payloads
-  are not UTF-8-validated (neither were single frames).
+  memory without limit through many small fragments. TEXT payloads are not UTF-8-validated
+  (neither were single frames).
+- **permessage-deflate is opt-in and lives here, shared with the client.** `PerMessageDeflate`
+  holds both negotiation directions and the codec, because `ez-php/websocket-client` already
+  depends on this package (`Frame`, `Opcode`) and needs the identical codec — one implementation,
+  no reverse dependency. Without a `PerMessageDeflateConfig` the server never answers an offer.
+  Messages are inflated after reassembly, in 1 KiB input slices with the output checked after
+  each — so `maxMessageBytes` bounds the inflated size with at most ~1 MiB overshoot (deflate's
+  1032:1 maximum), instead of trusting the compressed length. Our compressor honours the peer's
+  `*_max_window_bits` (9–15; an offer with 8 is declined because zlib raises a raw window of 8
+  to 9); our decompressor always uses 15 bits, which inflates any smaller window, so we never ask
+  the peer for a limit. Only the first frame of a message carries RSV1; control frames are never
+  compressed. `Frame::parse()` now rejects RSV2/RSV3 outright (RFC 6455 §5.2 — no extension
+  defines them) and exposes RSV1.
 - **No TLS (WSS) in this module.** The server speaks plain TCP. `wss://` is either
   terminated at the reverse proxy (nginx, Caddy) or by `ez-php/websocket-tls`, which
   listens on `tcp://` with the certificate in the stream context, negotiates TLS in its
@@ -479,7 +495,7 @@ process and are out of scope for this suite.
 
 | Concern | Where it belongs |
 |---------|-----------------|
-| SSE / server-sent events | `ez-php/broadcast` |
+| SSE / server-sent events | `ez-php/http` (`StreamedResponse::sse()`, `Sse\SseEvent`) |
 | TLS / WSS | `ez-php/websocket-tls` or a reverse proxy |
 | Authentication / authorization | Application handler (`onOpen()`: inspect `header('origin')`/`header('cookie')`, then `$conn->close()` to reject) |
 | Persistent connection state across restarts | External store (Redis, DB) |

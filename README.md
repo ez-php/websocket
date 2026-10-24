@@ -85,7 +85,8 @@ ws.onopen    = () => ws.send('Hello!');
 
 ```php
 $server = new Server(host: '0.0.0.0', port: 8080);
-// optional: maxMessageBytes (default 16 MiB), subprotocols (e.g. ['graphql-transport-ws'])
+// optional: maxMessageBytes (default 16 MiB), subprotocols (e.g. ['graphql-transport-ws']),
+//           compression: new PerMessageDeflateConfig() — accept permessage-deflate (needs ext-zlib)
 $server->run($handler); // blocks; handles SIGTERM externally
 ```
 
@@ -137,7 +138,8 @@ $mgr->count('room');                  // int
 
 ## Architecture notes
 
-- **Fragmented messages are reassembled**: a `TEXT`/`BINARY` frame with FIN=0 and its `CONTINUATION` frames reach `onMessage()` once, as one complete frame. `PING`s between fragments are answered. A stray continuation, a new data frame inside an open message, or a fragmented control frame closes with `1002`. A message larger than `maxMessageBytes` (third constructor argument, default 16 MiB), whether one frame or the sum of its fragments, closes with `1009`. No permessage-deflate.
+- **Fragmented messages are reassembled**: a `TEXT`/`BINARY` frame with FIN=0 and its `CONTINUATION` frames reach `onMessage()` once, as one complete frame. `PING`s between fragments are answered. A stray continuation, a new data frame inside an open message, or a fragmented control frame closes with `1002`. A message larger than `maxMessageBytes` (third constructor argument, default 16 MiB), whether one frame or the sum of its fragments, closes with `1009`.
+- **permessage-deflate (RFC 7692) is opt-in**: with `compression: new PerMessageDeflateConfig()` the server accepts a client's offer, inflates messages whose first frame has RSV1 before `onMessage()` sees them, and compresses what `send()`/`sendBinary()` write. `maxMessageBytes` applies to the *inflated* size (checked while inflating, so a small "zip bomb" is stopped early, with `1009`); undecodable data closes with `1007`, RSV1 without the extension or on control/continuation frames with `1002`. `PerMessageDeflateConfig(serverNoContextTakeover: true, clientNoContextTakeover: true)` trades ratio for ~256 KiB less memory per connection and direction. Control frames are never compressed.
 - **Unmasked client frames are refused**: per RFC 6455 §5.1 the server closes with status `1002`.
 - **No TLS (WSS)**: terminate TLS at a reverse proxy (nginx, Caddy) and use plain `ws://` internally.
 - **No authentication**: verify cookies or tokens in `onOpen()` and call `$conn->close()` on failure.

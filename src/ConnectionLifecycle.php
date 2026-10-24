@@ -20,6 +20,10 @@ use Fiber;
  * - a message over `$maxMessageBytes` (one frame or the sum of its fragments)
  *   closes with 1009
  * - `PING` is answered, `CLOSE` closes, `PONG` is ignored
+ * - with permessage-deflate negotiated, a message whose first frame has RSV1 is
+ *   inflated before delivery and its *inflated* size is held to `$maxMessageBytes`
+ *   (1009); RSV1 on a control or continuation frame, or without the extension,
+ *   closes with 1002, and undecodable data with 1007
  *
  * Call run() inside a Fiber: it suspends while no data is available.
  *
@@ -55,6 +59,7 @@ final readonly class ConnectionLifecycle
         // A fragmented message in progress: its opcode and the payload so far.
         $fragmentOpcode = null;
         $fragments = '';
+        $compressed = false;
 
         try {
             while ($conn->isConnected()) {
@@ -70,7 +75,15 @@ final readonly class ConnectionLifecycle
                     break;
                 }
 
-                if ($frame->opcode === Opcode::CLOSE || $frame->opcode === Opcode::PING || $frame->opcode === Opcode::PONG) {
+                $isControl = $frame->opcode === Opcode::CLOSE || $frame->opcode === Opcode::PING || $frame->opcode === Opcode::PONG;
+
+                // RFC 7692 §6.1: RSV1 only on the first frame of a data message, and only once negotiated.
+                if ($frame->rsv1 && ($conn->deflate() === null || $isControl || $frame->opcode === Opcode::CONTINUATION)) {
+                    $conn->closeWith(1002, 'Unexpected RSV1 bit.');
+                    break;
+                }
+
+                if ($isControl) {
                     // Control frames must not be fragmented; they may arrive between fragments.
                     if (!$frame->fin) {
                         $conn->closeWith(1002, 'Control frames must not be fragmented.');
@@ -97,19 +110,38 @@ final readonly class ConnectionLifecycle
                     break;
                 }
 
+                if ($frame->opcode !== Opcode::CONTINUATION) {
+                    $compressed = $frame->rsv1;
+                }
+
                 if (!$frame->fin) {
                     $fragmentOpcode ??= $frame->opcode;
                     $fragments .= $frame->payload;
                     continue;
                 }
 
-                if ($fragmentOpcode !== null) {
-                    $frame = new Frame($fragmentOpcode, $fragments . $frame->payload, true, true);
-                    $fragmentOpcode = null;
-                    $fragments = '';
+                $opcode = $fragmentOpcode ?? $frame->opcode;
+                $payload = $fragments . $frame->payload;
+                $fragmentOpcode = null;
+                $fragments = '';
+
+                $deflate = $conn->deflate();
+
+                if ($compressed && $deflate !== null) {
+                    try {
+                        $payload = $deflate->decompress($payload, $this->maxMessageBytes);
+                    } catch (MessageTooBigException) {
+                        $conn->closeWith(1009, 'Message too big.');
+                        break;
+                    } catch (WebSocketException) {
+                        $conn->closeWith(1007, 'Invalid compressed data.');
+                        break;
+                    }
                 }
 
-                $handler->onMessage($conn, $frame);
+                $handler->onMessage($conn, $compressed || $frame->opcode === Opcode::CONTINUATION
+                    ? new Frame($opcode, $payload, true, true)
+                    : $frame);
             }
         } catch (\Throwable $e) {
             $handler->onError($conn, $e);

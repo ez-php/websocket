@@ -64,12 +64,15 @@ final class Server
      *                                (one frame, or fragments adding up) closes with 1009.
      * @param list<string> $subprotocols Subprotocols to negotiate (`Sec-WebSocket-Protocol`), in
      *                                   preference order — e.g. `['graphql-transport-ws']`.
+     * @param PerMessageDeflateConfig|null $compression Accept permessage-deflate (RFC 7692) offers; null = never.
+     *                                                  `$maxMessageBytes` then limits the inflated size.
      */
     public function __construct(
         private readonly string $host = '0.0.0.0',
         private readonly int $port = 8080,
         private readonly int $maxMessageBytes = self::DEFAULT_MAX_MESSAGE_BYTES,
         private readonly array $subprotocols = [],
+        private readonly ?PerMessageDeflateConfig $compression = null,
     ) {
         $this->hooks = new LoopHooks();
     }
@@ -216,7 +219,7 @@ final class Server
 
         stream_set_blocking($clientSocket, false);
 
-        $conn = new Connection($clientSocket, (string) $this->nextId++, $this->subprotocols);
+        $conn = new Connection($clientSocket, (string) $this->nextId++, $this->subprotocols, $this->compression);
         $rid = get_resource_id($clientSocket);
 
         $this->connections[$rid] = $conn;

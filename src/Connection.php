@@ -42,16 +42,20 @@ final class Connection implements ConnectionInterface
 
     private ?string $subprotocol = null;
 
+    private ?PerMessageDeflate $deflate = null;
+
     /**
      * @param resource     $socket       Stream socket (blocking mode left to caller)
      * @param string       $id           Unique identifier for this connection
      * @param list<string> $subprotocols Subprotocols the server supports, in preference order;
      *                                   the first one the client also offers is selected (RFC 6455 §4.2.2)
+     * @param PerMessageDeflateConfig|null $compression Accept a permessage-deflate offer (RFC 7692); null = never
      */
     public function __construct(
         $socket,
         private readonly string $id,
         private readonly array $subprotocols = [],
+        private readonly ?PerMessageDeflateConfig $compression = null,
     ) {
         $this->socket = $socket;
     }
@@ -143,12 +147,16 @@ final class Connection implements ConnectionInterface
         );
 
         $this->subprotocol = $this->negotiateSubprotocol();
+        $this->deflate = $this->compression === null
+            ? null
+            : PerMessageDeflate::accept($this->requestHeaders['sec-websocket-extensions'] ?? '', $this->compression);
 
         $response = "HTTP/1.1 101 Switching Protocols\r\n"
             . "Upgrade: websocket\r\n"
             . "Connection: Upgrade\r\n"
             . "Sec-WebSocket-Accept: {$accept}\r\n"
             . ($this->subprotocol !== null ? "Sec-WebSocket-Protocol: {$this->subprotocol}\r\n" : '')
+            . ($this->deflate !== null ? "Sec-WebSocket-Extensions: {$this->deflate->responseHeader}\r\n" : '')
             . "\r\n";
 
         fwrite($this->socket, $response);
@@ -197,7 +205,7 @@ final class Connection implements ConnectionInterface
      */
     public function send(string $data): void
     {
-        $this->writeFrame(new Frame(Opcode::TEXT, $data));
+        $this->writeMessage(Opcode::TEXT, $data);
     }
 
     /**
@@ -205,7 +213,7 @@ final class Connection implements ConnectionInterface
      */
     public function sendBinary(string $data): void
     {
-        $this->writeFrame(new Frame(Opcode::BINARY, $data));
+        $this->writeMessage(Opcode::BINARY, $data);
     }
 
     /**
@@ -263,6 +271,17 @@ final class Connection implements ConnectionInterface
     }
 
     /**
+     * The permessage-deflate agreement from the handshake, or null when messages are
+     * uncompressed. Used by ConnectionLifecycle to inflate incoming messages.
+     *
+     * @internal
+     */
+    public function deflate(): ?PerMessageDeflate
+    {
+        return $this->deflate;
+    }
+
+    /**
      * Returns the upgrade-request headers, keyed by lowercased name.
      *
      * Populated by `handshake()`; empty before the handshake completes.
@@ -280,6 +299,20 @@ final class Connection implements ConnectionInterface
     public function header(string $name): ?string
     {
         return $this->requestHeaders[strtolower($name)] ?? null;
+    }
+
+    /**
+     * Writes a data message, compressed (RSV1 set) when permessage-deflate was negotiated.
+     */
+    private function writeMessage(Opcode $opcode, string $data): void
+    {
+        if ($this->deflate !== null && $this->connected) {
+            $this->writeFrame(new Frame($opcode, $this->deflate->compress($data), rsv1: true));
+
+            return;
+        }
+
+        $this->writeFrame(new Frame($opcode, $data));
     }
 
     /**
