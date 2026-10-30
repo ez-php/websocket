@@ -1,6 +1,6 @@
 {
     "name": "ez-php/websocket",
-    "version": "2.6.5",
+    "version": "2.7.0",
     "description": "PHP 8.5 Fiber-based WebSocket server for ez-php — RFC 6455 handshake, frame codec, ChannelManager pub/sub, and a non-blocking event loop.",
     "type": "library",
     "license": "MIT",
@@ -31,7 +31,7 @@
         "ext-zlib": "Needed for permessage-deflate compression (PerMessageDeflateConfig)"
     },
     "require-dev": {
-        "ez-php/docker": "^2.6.0",
+        "ez-php/docker": "^2.7.0",
         "phpunit/phpunit": "^13.0",
         "phpstan/phpstan": "^2.1",
         "friendsofphp/php-cs-fixer": "^3.94",
